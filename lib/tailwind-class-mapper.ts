@@ -1564,8 +1564,8 @@ export function classesToDesign(classes: string | string[]): Layer['design'] {
       if (value) design.typography!.fontSize = value;
     }
 
-    // Font Weight (arbitrary values)
-    if (cls.startsWith('font-[') && !cls.includes('sans') && !cls.includes('serif') && !cls.includes('mono')) {
+    // Font Weight (arbitrary values) — only numeric; anything else in font-[…] is a family
+    if (cls.match(/^font-\[\d/)) {
       const value = extractArbitraryValue(cls);
       if (value) design.typography!.fontWeight = value;
     }
@@ -1584,8 +1584,8 @@ export function classesToDesign(classes: string | string[]): Layer['design'] {
     if (cls.startsWith('font-[') && !cls.match(/^font-\[\d/)) {
       const value = extractArbitraryValue(cls);
       if (value) {
-        // Convert underscores back to spaces for font family names
-        design.typography!.fontFamily = value.replace(/_/g, ' ');
+        // Underscores stand for spaces; quotes (font-['Instrument_Serif']) aren't part of the name
+        design.typography!.fontFamily = value.replace(/^['"]|['"]$/g, '').replace(/_/g, ' ');
       }
     }
     // Font Family (named values)

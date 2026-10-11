@@ -135,8 +135,10 @@ const TypographyControls = memo(function TypographyControls({ layer, onLayerUpda
     'black': '900',
   };
 
-  // Convert numeric weight to named for the Select
-  const fontWeight = fontWeightMap[fontWeightRaw] || fontWeightRaw;
+  // Convert numeric weight to named for the Select. Saved layers can carry a font
+  // name as their weight (e.g. "Inter"); show those as "normal".
+  const isValidWeight = /^\d/.test(fontWeightRaw) || fontWeightRaw in fontWeightMapReverse;
+  const fontWeight = fontWeightMap[fontWeightRaw] || (isValidWeight ? fontWeightRaw : 'normal');
 
   // Handle font family change
   const handleFontFamilyChange = (value: string) => {
