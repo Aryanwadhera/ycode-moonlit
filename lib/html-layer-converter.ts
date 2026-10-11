@@ -16,6 +16,7 @@ import { escapeHtml } from '@/lib/escape-html';
 import { generateLinkHref, isValidLinkSettings } from '@/lib/link-utils';
 import type { LinkResolutionContext } from '@/lib/link-utils';
 import { normalizeV3ToV4, resolveNamedColors } from '@/lib/tailwind-normalizer';
+import { convertGradientClasses, convertMobileFirstClasses, normalizePositionClasses } from '@/lib/html-import-classes';
 import { cssToClasses } from '@/lib/import/css';
 
 // Numeric node types instead of the `Node` global, which server-side DOMs don't define.
@@ -459,10 +460,15 @@ function resolveImportClasses(el: Element, ctx: ImportContext, path: string, lay
 
   const merged = [...htmlClasses, ...inlineClasses];
   const normalized = normalizeV3ToV4(merged, { rescaleSizes: ctx.rescaleSizes });
-  const resolved = resolveNamedColors(normalized);
+  const named = resolveNamedColors(normalized);
+  const withGradients = convertGradientClasses(normalizePositionClasses(named));
+  const { classes: resolved, approximated } = convertMobileFirstClasses(withGradients);
 
   if (ctx.warnings) {
     warnDroppedStyles(styleAttr, ctx, path, layerId);
+    for (const cls of approximated) {
+      warn(ctx, path, `"${cls}" was approximated: Ycode's mobile breakpoint covers everything below 768px, so mobile uses the unprefixed value`, layerId);
+    }
     for (const cls of resolved) warnClass(cls, ctx, path, layerId);
   }
 
@@ -481,6 +487,8 @@ const VARIANT_PREFIX_RE = /^((?:[a-z0-9-]+:)+)/;
 const MOBILE_FIRST_BREAKPOINTS = new Set(['sm', 'md', 'lg', 'xl', '2xl']);
 const EDITABLE_BREAKPOINT_VARIANTS = new Set(['max-lg', 'max-md']);
 const EDITABLE_STATE_VARIANTS = new Set(['hover', 'focus', 'active', 'disabled', 'current', 'visited']);
+/** Render-only classes with no design-panel control that nobody needs to edit. */
+const SILENT_RAW_CLASSES = new Set(['antialiased', 'subpixel-antialiased']);
 
 /**
  * Classes always render, but the design panel only shows breakpoint/state
@@ -493,7 +501,7 @@ function warnClass(cls: string, ctx: ImportContext, path: string, layerId: strin
 
   const mobileFirst = variants.find((v) => MOBILE_FIRST_BREAKPOINTS.has(v));
   if (mobileFirst) {
-    warn(ctx, path, `Mobile-first prefix "${mobileFirst}:" (in "${cls}") renders, but Ycode is desktop-first and can't edit it per breakpoint. Use unprefixed classes for desktop, "max-lg:" for tablet and "max-md:" for mobile`, layerId);
+    warn(ctx, path, `Mobile-first prefix "${mobileFirst}:" (in "${cls}") renders, but couldn't be converted to Ycode's desktop-first breakpoints (no unprefixed value for the same property, or xl:/2xl:), so it can't be edited per breakpoint. Use unprefixed classes for desktop, "max-lg:" for tablet and "max-md:" for mobile`, layerId);
     return;
   }
 
@@ -508,7 +516,7 @@ function warnClass(cls: string, ctx: ImportContext, path: string, layerId: strin
     return;
   }
 
-  if (getAffectedProperties(base).length === 0) {
+  if (getAffectedProperties(base).length === 0 && !SILENT_RAW_CLASSES.has(base)) {
     warn(ctx, path, `Class "${base}" renders, but has no control in the design panel (editable only as a raw class)`, layerId);
   }
 }

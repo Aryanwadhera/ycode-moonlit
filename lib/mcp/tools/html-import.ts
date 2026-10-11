@@ -116,8 +116,11 @@ export function registerHtmlImportTools(server: McpServer) {
 Use ONLY when the user asks for HTML import or provides HTML/Tailwind markup. Otherwise build with
 add_layout and the layer tools (add_layer, batch_operations, update_layer_design).
 
-Write desktop-first classes: unprefixed for desktop, "max-lg:" for tablet, "max-md:" for mobile
-("md:"/"lg:" render but can't be edited per breakpoint). Reference color variables as
+Prefer desktop-first classes: unprefixed for desktop, "max-lg:" for tablet, "max-md:" for mobile.
+Mobile-first "sm:"/"md:"/"lg:" classes are converted automatically when the same property also has
+an unprefixed value ("flex-col md:flex-row" → "flex-row max-md:flex-col"); the rest stay raw and
+are reported. v4 gradients (bg-linear-to-* + from/via/to) and inset-*/top-* values are converted to
+editable design too. Reference color variables as
 "bg-[var(--<id>)]" / "text-[var(--<id>)]". Images need absolute https URLs (or upload_asset first,
 then update_layer_image).
 
