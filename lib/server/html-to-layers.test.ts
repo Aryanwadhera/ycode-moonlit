@@ -54,7 +54,7 @@ test('warns about everything dropped or converted lossily', () => {
   expectSome(/Inline <span> inside text lost its class/);
   expectSome(/<select> options were not imported/);
   expectSome(/Unknown tag <custom-el>/);
-  expectSome(/Link "#pricing" was kept as a URL/);
+  expectSome(/Link "#pricing" has no element with id "pricing"/);
   expectSome(/Inline style "--brand: red" was dropped/);
 });
 
@@ -79,6 +79,58 @@ test('MCP import keeps v4 size classes; the editor import still rescales v3', ()
 
   assert.deepEqual(normalizeV3ToV4(['rounded-sm', 'shadow', 'ring']), ['rounded-xs', 'shadow-sm', 'ring-3']);
   assert.deepEqual(normalizeV3ToV4(['flex-grow', 'rounded-sm'], { rescaleSizes: false }), ['grow', 'rounded-sm']);
+});
+
+test('keeps styled inline children and flex items as separate layers', () => {
+  const { layers, warnings } = htmlToLayersOnServer(`
+    <nav class="flex gap-[16px]">
+      <a href="https://example.com/a" class="rounded-full px-4">Pricing</a>
+      <a href="https://example.com/b" class="rounded-full px-4">Docs</a>
+    </nav>
+    <div class="flex"><span>One</span><span>Two</span></div>`);
+
+  const [nav, row] = layers;
+  const links = nav.children as Layer[];
+  assert.equal(links.length, 2);
+  assert.match(links[0].classes as string, /rounded-full px-4/);
+  assert.equal(links[0].variables?.link?.url?.data.content, 'https://example.com/a');
+  assert.equal((row.children as Layer[]).length, 2);
+  assert.ok(!warnings.some((w) => /lost its class/.test(w.message)));
+});
+
+test('still merges inline elements inside running text', () => {
+  const [div] = htmlToLayersOnServer('<div>Read <a class="underline" href="https://example.com">the docs</a> now</div>').layers;
+  const children = div.children as Layer[];
+  assert.equal(children.length, 1);
+  assert.equal(children[0].name, 'text');
+
+  const [plain] = htmlToLayersOnServer('<div><strong>Bold</strong> <em>words</em></div>').layers;
+  assert.equal((plain.children as Layer[]).length, 1);
+});
+
+test('turns #id links into native anchors when the target exists', () => {
+  const { layers, warnings } = htmlToLayersOnServer(`
+    <div class="flex"><a href="#features" target="_self">Features</a><a href="#faq">FAQ</a><a href="#missing">Nope</a></div>
+    <section id="features"></section>`, { anchorIds: ['faq'] });
+
+  const [features, faq, missing] = layers[0].children as Layer[];
+  assert.deepEqual(features.variables?.link, { type: 'url', anchor_layer_id: 'features', target: '_self' });
+  assert.equal(faq.variables?.link?.anchor_layer_id, 'faq');
+  assert.equal(missing.variables?.link?.url?.data.content, '#missing');
+  assert.deepEqual(warnings.map((w) => w.message), [
+    'Link "#missing" has no element with id "missing" in the import or on the page, so it was kept as a URL',
+  ]);
+});
+
+test('returns refs for ids and data-ref without keeping data-ref', () => {
+  const { layers, warnings, refs } = htmlToLayersOnServer(`
+    <section id="top"><a data-ref="cta" href="https://example.com" class="px-4">Go</a><img data-ref="hero" src="https://example.com/a.png" alt=""></section>`);
+
+  const [section] = layers;
+  const [cta, hero] = section.children as Layer[];
+  assert.deepEqual(refs, { top: section.id, cta: cta.id, hero: hero.id });
+  assert.equal(cta.attributes?.['data-ref'], undefined);
+  assert.deepEqual(warnings, []);
 });
 
 test('classesToDesign keeps breakpoint classes out of the desktop design', () => {

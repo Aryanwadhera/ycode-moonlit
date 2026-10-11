@@ -39,11 +39,24 @@ export interface HtmlImportOptions {
    * (rounded → rounded-sm, …) is skipped.
    */
   tailwindV4?: boolean;
+  /** Receives `{ [html id or data-ref]: layerId }` for every imported element that has one. */
+  refs?: Record<string, string>;
+  /** Html ids already on the target page, so `href="#id"` links to them become native anchors. */
+  anchorIds?: Iterable<string>;
+}
+
+interface PendingAnchor {
+  layer: Layer;
+  anchorId: string;
+  path: string;
 }
 
 interface ImportContext {
   warnings: HtmlImportWarning[] | null;
   rescaleSizes: boolean;
+  refs: Record<string, string>;
+  htmlIds: Set<string>;
+  pendingAnchors: PendingAnchor[];
 }
 
 function warn(ctx: ImportContext, path: string, message: string, layerId?: string): void {
@@ -360,6 +373,37 @@ function isTextOnlyElement(el: Element): boolean {
   return true;
 }
 
+const FLEX_OR_GRID_DISPLAY = new Set(['flex', 'inline-flex', 'grid', 'inline-grid']);
+
+/**
+ * Inline-only children stay separate layers when they act as items rather than
+ * text: the parent lays them out (flex/grid) or they carry their own styling,
+ * as in nav links, button rows, and pills. Loose text next to them means they
+ * sit inside a sentence, so they merge into rich text instead.
+ */
+function keepsInlineChildrenAsLayers(el: Element): boolean {
+  let hasElementChild = false;
+  let hasStyledChild = false;
+  for (let i = 0; i < el.childNodes.length; i++) {
+    const node = el.childNodes[i];
+    if (node.nodeType === TEXT_NODE) {
+      if ((node.textContent || '').trim()) return false;
+    } else if (node.nodeType === ELEMENT_NODE) {
+      const child = node as Element;
+      if (child.tagName.toLowerCase() === 'br') continue;
+      hasElementChild = true;
+      if (child.getAttribute('class')?.trim() || child.getAttribute('style')?.trim() || child.getAttribute('id')) {
+        hasStyledChild = true;
+      }
+    }
+  }
+  if (!hasElementChild) return false;
+  if (hasStyledChild) return true;
+
+  const classes = (el.getAttribute('class') || '').split(/\s+/);
+  return classes.some((cls) => FLEX_OR_GRID_DISPLAY.has(cls.slice(cls.lastIndexOf(':') + 1)));
+}
+
 const TEXT_LAYER_NAMES = new Set(['text', 'heading', 'span']);
 
 const LAYER_NAME_LABELS: Record<string, string> = {
@@ -528,7 +572,7 @@ function warnDroppedAttributes(el: Element, tag: string, ctx: ImportContext, pat
   const imported = IMPORTED_ATTRS[tag] || [];
   const dropped = Array.from(el.attributes)
     .map((attr) => attr.name)
-    .filter((name) => name !== 'class' && name !== 'style' && !imported.includes(name)
+    .filter((name) => name !== 'class' && name !== 'style' && name !== 'data-ref' && !imported.includes(name)
       && !(name === 'id' && !ID_DROPPING_TAGS.has(tag)));
   if (dropped.length > 0) {
     warn(ctx, path, `Attributes dropped from <${tag}>: ${dropped.join(', ')}`, layerId);
@@ -544,6 +588,28 @@ function warnRelativeSrc(el: Element, tag: string, ctx: ImportContext, path: str
   }
 }
 
+function addRef(ctx: ImportContext, ref: string, layerId: string, path: string): void {
+  if (ctx.refs[ref]) {
+    warn(ctx, path, `Duplicate id/data-ref "${ref}"; the returned refs point to the last element using it`, layerId);
+  }
+  ctx.refs[ref] = layerId;
+}
+
+/** Turns `href="#id"` links whose target exists into native anchor links. */
+function resolvePendingAnchors(ctx: ImportContext, existingIds: Set<string>): void {
+  for (const { layer, anchorId, path } of ctx.pendingAnchors) {
+    const link = layer.variables?.link;
+    if (!link) continue;
+    if (ctx.htmlIds.has(anchorId) || existingIds.has(anchorId)) {
+      const anchorLink: LinkSettings = { ...link, type: 'url', anchor_layer_id: anchorId };
+      delete anchorLink.url;
+      layer.variables = { ...layer.variables, link: anchorLink };
+    } else {
+      warn(ctx, path, `Link "#${anchorId}" has no element with id "${anchorId}" in the import or on the page, so it was kept as a URL`, layer.id);
+    }
+  }
+}
+
 function elementToLayer(el: Element, ctx: ImportContext, path: string): Layer | null {
   const tag = el.tagName.toLowerCase();
 
@@ -556,6 +622,9 @@ function elementToLayer(el: Element, ctx: ImportContext, path: string): Layer | 
   const layerId = generateId('lyr');
   const layerName = TAG_TO_LAYER_NAME[tag] || 'div';
   const classes = resolveImportClasses(el, ctx, path, layerId);
+
+  const ref = el.getAttribute('data-ref')?.trim();
+  if (ref) addRef(ctx, ref, layerId, path);
 
   const rawDesign = classes ? classesToDesign(classes) : undefined;
   const design = cleanDesign(rawDesign);
@@ -598,7 +667,7 @@ function elementToLayer(el: Element, ctx: ImportContext, path: string): Layer | 
       if (rel) linkSettings.rel = rel;
       layer.variables = { ...layer.variables, link: linkSettings };
       if (href.startsWith('#') && href.length > 1) {
-        warn(ctx, path, `Link "${href}" was kept as a URL; use update_layer_link with an anchor target for a native anchor link`, layerId);
+        ctx.pendingAnchors.push({ layer, anchorId: href.slice(1), path });
       }
     }
   }
@@ -742,6 +811,8 @@ function elementToLayer(el: Element, ctx: ImportContext, path: string): Layer | 
   const customId = el.getAttribute('id');
   if (customId) {
     layer.attributes = { ...layer.attributes, id: customId };
+    ctx.htmlIds.add(customId);
+    if (customId !== ref) addRef(ctx, customId, layerId, path);
   }
 
   const isTextLayer = TEXT_LAYER_NAMES.has(layerName);
@@ -762,7 +833,7 @@ function elementToLayer(el: Element, ctx: ImportContext, path: string): Layer | 
     return layer;
   }
 
-  if (!isTextLayer && isTextOnlyElement(el) && el.textContent?.trim()) {
+  if (!isTextLayer && isTextOnlyElement(el) && el.textContent?.trim() && !keepsInlineChildrenAsLayers(el)) {
     const doc = buildRichTextDoc(el, ctx, path);
     if (CONTAINER_NAMES.has(layerName)) {
       layer.children = [makeTextLayer(doc)];
@@ -829,6 +900,9 @@ export function documentToLayers(doc: Document, options: HtmlImportOptions = {})
   const ctx: ImportContext = {
     warnings: options.warnings ?? null,
     rescaleSizes: !options.tailwindV4,
+    refs: options.refs ?? {},
+    htmlIds: new Set(),
+    pendingAnchors: [],
   };
 
   // Parsers hoist <style>, <link>, <title>, etc. into <head>, out of the body walk
@@ -841,7 +915,9 @@ export function documentToLayers(doc: Document, options: HtmlImportOptions = {})
     }
   }
 
-  return doc.body ? childNodesToLayers(doc.body, ctx, '') : [];
+  const layers = doc.body ? childNodesToLayers(doc.body, ctx, '') : [];
+  resolvePendingAnchors(ctx, new Set(options.anchorIds ?? []));
+  return layers;
 }
 
 /**

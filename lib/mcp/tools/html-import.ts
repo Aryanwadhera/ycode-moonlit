@@ -4,7 +4,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { broadcastComponentLayersUpdated } from '@/lib/mcp/broadcast';
 import { collectFontFamiliesFromDesign, ensureFontsInstalled, fontWarnings } from '@/lib/mcp/font-install';
 import { getCachedLayers, saveCachedLayers } from '@/lib/mcp/page-layers';
-import { canHaveChildren, findLayerById, generateId, insertLayer } from '@/lib/mcp/utils';
+import { canHaveChildren, findLayerById, generateId, insertLayer, removeLayer } from '@/lib/mcp/utils';
 import { getComponentById, updateComponent } from '@/lib/repositories/componentRepository';
 import { htmlToLayersOnServer } from '@/lib/server/html-to-layers';
 import type { HtmlImportWarning } from '@/lib/html-layer-converter';
@@ -85,6 +85,30 @@ function errorResult(text: string) {
   return { content: [{ type: 'text' as const, text: `Error: ${text}` }], isError: true };
 }
 
+/** Html ids (the anchor targets links point at) used anywhere in the tree. */
+function collectHtmlIds(layers: Layer[], into = new Set<string>()): Set<string> {
+  for (const layer of layers) {
+    const htmlId = layer.settings?.id || layer.attributes?.id;
+    if (typeof htmlId === 'string' && htmlId) into.add(htmlId);
+    if (layer.children) collectHtmlIds(layer.children, into);
+  }
+  return into;
+}
+
+/** Parent id (undefined at the tree root) and index of a layer, or null when it isn't in the tree. */
+function findPlacement(
+  layers: Layer[],
+  id: string,
+  parentId?: string,
+): { parentId: string | undefined; index: number } | null {
+  for (let i = 0; i < layers.length; i++) {
+    if (layers[i].id === id) return { parentId, index: i };
+    const found = findPlacement(layers[i].children ?? [], id, layers[i].id);
+    if (found) return found;
+  }
+  return null;
+}
+
 export function registerHtmlImportTools(server: McpServer) {
   server.tool(
     'import_html',
@@ -95,7 +119,22 @@ add_layout and the layer tools (add_layer, batch_operations, update_layer_design
 Write desktop-first classes: unprefixed for desktop, "max-lg:" for tablet, "max-md:" for mobile
 ("md:"/"lg:" render but can't be edited per breakpoint). Reference color variables as
 "bg-[var(--<id>)]" / "text-[var(--<id>)]". Images need absolute https URLs (or upload_asset first,
-then update_layer_image). Give anchor targets an id attribute.
+then update_layer_image).
+
+STRUCTURE: every element becomes a layer, except inline tags (a, span, strong, …) inside running
+text, which merge into the text as rich-text marks and lose their classes. Inline elements that are
+the only content of their parent stay separate layers when they have their own classes or the
+parent is flex/grid (nav links, button rows, pills).
+
+LINKS: href="#id" becomes a native anchor link when an element with that id is in the HTML or
+already on the page.
+
+REFS: elements with an id or data-ref="name" are returned in "refs" as { name: layer_id }, so you
+can target them afterwards without get_layers. data-ref is not kept on the layer.
+
+ITERATING: pass replace_layer_id to swap an existing layer (e.g. a section you imported earlier) for
+the new HTML in one atomic step, at the same position. Pass dry_run: true to get the layer count and
+warnings without changing anything. Import large pages section by section.
 
 Returns the ids of the created top-level layers plus warnings for anything dropped or converted
 lossily (attributes, unknown tags, relative media, classes without a design-panel control). Fix
@@ -108,29 +147,31 @@ expressible in HTML; add them afterwards with their tools.`,
       parent_layer_id: z.string().optional()
         .describe('Parent layer ID. Defaults to the page body; for components, the component root.'),
       position: z.number().int().min(0).optional().describe('Index within the parent. Omit to append at the end.'),
+      replace_layer_id: z.string().optional()
+        .describe('Layer to replace with the imported layers, at the same position. Not combinable with parent_layer_id/position.'),
+      dry_run: z.boolean().optional()
+        .describe('Convert and report layer count, warnings and refs without saving anything.'),
       html: z.string().min(1).max(MAX_HTML_LENGTH)
         .describe('HTML with Tailwind classes: one section or a full page body.'),
     },
-    async ({ page_id, component_id, variant_id, parent_layer_id, position, html }) => {
+    async ({ page_id, component_id, variant_id, parent_layer_id, position, replace_layer_id, dry_run, html }) => {
       if (!page_id === !component_id) {
         return errorResult('Provide exactly one of page_id or component_id.');
       }
-
-      const { layers: imported, warnings } = htmlToLayersOnServer(html);
-      if (imported.length === 0) {
-        return errorResult('The HTML produced no layers. Check that it contains elements inside <body> (or is a plain fragment).');
+      if (replace_layer_id && (parent_layer_id || position !== undefined)) {
+        return errorResult('replace_layer_id already sets the position; omit parent_layer_id and position.');
       }
 
-      let target = '';
-      let parentId = parent_layer_id;
+      let tree: Layer[];
+      let target: string;
+      let saveTree: (layers: Layer[]) => Promise<void>;
 
       if (page_id) {
-        const layers = await getCachedLayers(page_id);
-        parentId ??= layers.find((l) => l.id === 'body' || l.name === 'body')?.id;
-        const updated = insertLayers(layers, parentId, imported, position);
-        if (typeof updated === 'string') return errorResult(updated);
-        await saveCachedLayers(page_id, updated);
+        tree = await getCachedLayers(page_id);
         target = `page ${page_id}`;
+        saveTree = async (layers) => {
+          await saveCachedLayers(page_id, layers);
+        };
       } else {
         const component = await getComponentById(component_id!);
         if (!component) return errorResult(`Component "${component_id}" not found.`);
@@ -141,29 +182,77 @@ expressible in HTML; add them afterwards with their tools.`,
         const idx = variant_id ? variants.findIndex((v) => v.id === variant_id) : 0;
         if (idx === -1) return errorResult(`Variant "${variant_id}" not found.`);
 
-        const updated = insertLayers(variants[idx].layers || [], parentId, imported, position);
-        if (typeof updated === 'string') return errorResult(updated);
-
-        const updatedVariants = variants.map((v, i) => (i === idx ? { ...v, layers: updated } : v));
-        await updateComponent(component_id!, { variants: updatedVariants });
-        broadcastComponentLayersUpdated(component_id!, updatedVariants[0].layers).catch(() => {});
+        tree = variants[idx].layers || [];
         target = `component "${component.name}"`;
+        saveTree = async (layers) => {
+          const updatedVariants = variants.map((v, i) => (i === idx ? { ...v, layers } : v));
+          await updateComponent(component_id!, { variants: updatedVariants });
+          broadcastComponentLayersUpdated(component_id!, updatedVariants[0].layers).catch(() => {});
+        };
       }
+
+      let parentId = parent_layer_id;
+      let insertAt = position;
+      let baseTree = tree;
+
+      if (replace_layer_id) {
+        const placement = findPlacement(tree, replace_layer_id);
+        if (!placement) return errorResult(`Layer "${replace_layer_id}" not found in ${target}.`);
+        const replaced = findLayerById(tree, replace_layer_id);
+        if (replaced?.name === 'body' || replaced?.id === 'body') {
+          return errorResult('The page body cannot be replaced; replace its sections instead.');
+        }
+        parentId = placement.parentId;
+        insertAt = placement.index;
+        baseTree = removeLayer(tree, replace_layer_id);
+      } else if (page_id) {
+        parentId ??= tree.find((l) => l.id === 'body' || l.name === 'body')?.id;
+      }
+
+      const { layers: imported, warnings, refs } = htmlToLayersOnServer(html, {
+        anchorIds: collectHtmlIds(baseTree),
+      });
+      if (imported.length === 0) {
+        return errorResult('The HTML produced no layers. Check that it contains elements inside <body> (or is a plain fragment).');
+      }
+
+      const updated = insertLayers(baseTree, parentId, imported, insertAt);
+      if (typeof updated === 'string') return errorResult(updated);
+
+      const { groups, omitted } = groupWarnings(warnings);
+      const total = countLayers(imported);
+      const refKeys = Object.keys(refs);
+
+      if (dry_run) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              message: `Dry run: would import ${imported.length} top-level layer(s) (${total} total) into ${target}${replace_layer_id ? `, replacing ${replace_layer_id}` : ''}. Nothing was saved.`,
+              ref_names: refKeys.length > 0 ? refKeys : undefined,
+              warning_count: warnings.length,
+              warnings: groups.length > 0 ? groups : undefined,
+              warnings_omitted: omitted > 0 ? omitted : undefined,
+            }),
+          }],
+        };
+      }
+
+      await saveTree(updated);
 
       const fontFamilies = new Set<string>();
       collectFontFamilies(imported, fontFamilies);
       const fonts = await ensureFontsInstalled(fontFamilies);
-
-      const { groups, omitted } = groupWarnings(warnings);
       const designWarnings = fontWarnings(fonts);
 
       return {
         content: [{
           type: 'text' as const,
           text: JSON.stringify({
-            message: `Imported ${imported.length} top-level layer(s) (${countLayers(imported)} total) into ${target}`,
+            message: `Imported ${imported.length} top-level layer(s) (${total} total) into ${target}${replace_layer_id ? `, replacing ${replace_layer_id}` : ''}`,
             layer_ids: imported.map((l) => l.id),
             parent_layer_id: parentId ?? null,
+            refs: refKeys.length > 0 ? refs : undefined,
             warning_count: warnings.length,
             warnings: groups.length > 0 ? groups : undefined,
             warnings_omitted: omitted > 0 ? omitted : undefined,
