@@ -449,14 +449,51 @@ export async function publishPages(pageIds: string[]): Promise<PublishPagesResul
       upsertKeyToId.set(slugKey(p), p.id);
     }
 
-    const slugsToCheck = [...new Set(nonDynamicPagesToUpsert.map((p) => p.slug))];
-    const { data: conflictingPublished } = await client
+    // PostgREST encodes `.in('slug', [''])` as `slug=in.()`, which matches
+    // nothing. Homepages and folder indexes use an empty slug, so that filter
+    // hides the published page already sitting on the slot and the upsert
+    // then dies on the slug unique index. Query the empty slug with `.eq`.
+    const nonEmptySlugs = [...new Set(
+      nonDynamicPagesToUpsert.map((p) => p.slug).filter((slug) => slug !== '')
+    )];
+    const checksEmptySlug = nonDynamicPagesToUpsert.some((p) => p.slug === '');
+
+    const conflictQuery = () => client
       .from('pages')
       .select('id, slug, page_folder_id, error_page')
       .eq('is_published', true)
       .eq('is_dynamic', false)
-      .is('deleted_at', null)
-      .in('slug', slugsToCheck);
+      .is('deleted_at', null);
+
+    const conflictingPublished: Array<{
+      id: string;
+      slug: string;
+      page_folder_id: string | null;
+      error_page: number | null;
+    }> = [];
+
+    if (nonEmptySlugs.length > 0) {
+      const { data, error: conflictError } = await conflictQuery().in('slug', nonEmptySlugs);
+
+      // Failing to enumerate conflicting pages means we'd hit the slug unique
+      // index on the upsert below with no recourse — surface the error
+      // instead of swallowing it.
+      if (conflictError) {
+        throw new Error(`Failed to scan for conflicting published pages: ${conflictError.message}`);
+      }
+
+      conflictingPublished.push(...(data || []));
+    }
+
+    if (checksEmptySlug) {
+      const { data, error: emptySlugError } = await conflictQuery().eq('slug', '');
+
+      if (emptySlugError) {
+        throw new Error(`Failed to scan for conflicting published pages: ${emptySlugError.message}`);
+      }
+
+      conflictingPublished.push(...(data || []));
+    }
 
     // Delete if a different page will occupy this slug/folder/error_page slot
     const idsToDelete = (conflictingPublished || [])
