@@ -27,6 +27,7 @@ import { getAssetsByIds } from '@/lib/repositories/assetRepository';
 import { getAllDraftPageFolders } from '@/lib/repositories/pageFolderRepository';
 import { getAllDraftPages } from '@/lib/repositories/pageRepository';
 import { collectFontFamiliesFromDesign, ensureFontsInstalled, fontWarnings } from '@/lib/mcp/font-install';
+import { hasLayerQuery, MAX_SEARCH_MATCHES, queryLayers } from '@/lib/mcp/layer-query';
 import { getCachedLayers as getPageLayers, saveCachedLayers } from '@/lib/mcp/page-layers';
 import { designSchema, richTextBlockSchema, templateEnum } from './shared-schemas';
 
@@ -37,13 +38,36 @@ async function savePageLayers(pageId: string, layers: Layer[]): Promise<void> {
 export function registerLayerTools(server: McpServer) {
   server.tool(
     'get_layers',
-    `Get the full layer tree for a page. Returns all layers with their design properties,
-text content, children, and settings. Use this to understand the current page structure
-before making changes.`,
-    { page_id: z.string().describe('The page ID') },
-    async ({ page_id }) => {
+    `Get the layer tree for a page. With only page_id, returns every layer with its design
+properties, text content, children, and settings.
+
+On large pages, read in pieces instead of fetching everything:
+- fields: "summary" returns only id, name, customName, html_id, text, classes, componentId
+- depth: levels of children to include (0 = just the layers themselves); deeper levels become
+  children_count
+- layer_id: return only that layer's subtree
+- search: case-insensitive match on id, name, html id, classes, or text; returns up to
+  ${MAX_SEARCH_MATCHES} matches with their parent_id and path (children excluded unless depth is set)
+
+Typical flow: fields "summary" + depth 2 for an overview, then layer_id for the section you edit.`,
+    {
+      page_id: z.string().describe('The page ID'),
+      layer_id: z.string().optional().describe('Return only this layer and its descendants'),
+      depth: z.number().int().min(0).optional().describe('Levels of children to include below each returned layer'),
+      search: z.string().optional().describe('Find layers whose id, name, html id, classes, or text contain this'),
+      fields: z.enum(['full', 'summary']).optional().describe('"summary" for a compact view; default "full"'),
+    },
+    async ({ page_id, layer_id, depth, search, fields }) => {
       const layers = await getPageLayers(page_id);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(layers) }] };
+      const query = { layerId: layer_id, depth, search, fields };
+      if (!hasLayerQuery(query)) {
+        return { content: [{ type: 'text' as const, text: JSON.stringify(layers) }] };
+      }
+      const result = queryLayers(layers, query);
+      if ('error' in result) {
+        return { content: [{ type: 'text' as const, text: `Error: ${result.error}` }], isError: true };
+      }
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     },
   );
 
