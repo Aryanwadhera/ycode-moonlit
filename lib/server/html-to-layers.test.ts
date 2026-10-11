@@ -133,6 +133,28 @@ test('returns refs for ids and data-ref without keeping data-ref', () => {
   assert.deepEqual(warnings, []);
 });
 
+test('imports mobile-first, gradient and inset classes as editable design', () => {
+  const { layers, warnings } = htmlToLayersOnServer(`
+    <section class="relative flex flex-col md:flex-row antialiased bg-linear-to-r from-blue-500 to-white">
+      <div class="absolute inset-0"></div>
+      <h1 class="text-4xl sm:text-5xl lg:text-7xl">Hi</h1>
+    </section>`);
+
+  const [section] = layers;
+  assert.equal(section.classes, 'relative flex flex-row max-md:flex-col antialiased bg-[linear-gradient(to_right,#3b82f6,#ffffff)]');
+  assert.equal(section.design?.layout?.flexDirection, 'row');
+  assert.equal(section.design?.backgrounds?.backgroundColor, 'linear-gradient(to_right,#3b82f6,#ffffff)');
+
+  const [overlay, heading] = section.children as Layer[];
+  assert.equal(overlay.classes, 'absolute top-[0px] right-[0px] bottom-[0px] left-[0px]');
+  assert.equal(overlay.design?.positioning?.top, '0px');
+  assert.equal(heading.classes, 'text-7xl max-lg:text-5xl max-md:text-4xl');
+
+  assert.deepEqual(warnings.map((w) => w.message), [
+    '"sm:text-5xl" was approximated: Ycode\'s mobile breakpoint covers everything below 768px, so mobile uses the unprefixed value',
+  ]);
+});
+
 test('classesToDesign keeps breakpoint classes out of the desktop design', () => {
   const design = classesToDesign('flex flex-row gap-[16px] max-md:flex-col max-lg:gap-[8px]');
   assert.equal(design?.layout?.flexDirection, 'row');
