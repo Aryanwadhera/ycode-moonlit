@@ -160,3 +160,15 @@ test('classesToDesign keeps breakpoint classes out of the desktop design', () =>
   assert.equal(design?.layout?.flexDirection, 'row');
   assert.equal(design?.layout?.gap, '16px');
 });
+
+test('classesToDesign reads font-[…] as a weight only when numeric', () => {
+  const typography = (classes: string) => {
+    const t = classesToDesign(classes)?.typography;
+    return { fontFamily: t?.fontFamily, fontWeight: t?.fontWeight };
+  };
+  assert.deepEqual(typography('font-[Inter]'), { fontFamily: 'Inter', fontWeight: undefined });
+  assert.deepEqual(typography('font-[DM_Sans]'), { fontFamily: 'DM Sans', fontWeight: undefined });
+  assert.deepEqual(typography("font-['Instrument_Serif']"), { fontFamily: 'Instrument Serif', fontWeight: undefined });
+  assert.deepEqual(typography('font-semibold font-[Inter]'), { fontFamily: 'Inter', fontWeight: '600' });
+  assert.deepEqual(typography('font-[650]'), { fontFamily: undefined, fontWeight: '650' });
+});
