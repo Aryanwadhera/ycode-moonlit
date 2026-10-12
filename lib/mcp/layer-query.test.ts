@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { hasLayerQuery, MAX_SEARCH_MATCHES, queryLayers } from './layer-query';
+import { describeLink, hasLayerQuery, MAX_SEARCH_MATCHES, queryLayers } from './layer-query';
 import type { Layer } from '../../types';
 
 const richText = (text: string) => ({
@@ -96,4 +96,25 @@ test('search inside a subtree keeps the full path and caps matches', () => {
   assert.equal(capped.matches.length, MAX_SEARCH_MATCHES);
   assert.equal(capped.match_count, MAX_SEARCH_MATCHES + 5);
   assert.equal(capped.matches_omitted, 5);
+});
+
+test('summary includes the html tag and a one-line link', () => {
+  const layers: Layer[] = [{
+    id: 'a',
+    name: 'text',
+    classes: '',
+    settings: { tag: 'h2' },
+    variables: { link: { type: 'url', url: { type: 'dynamic_text', data: { content: 'https://x.com' } } } },
+  }];
+  assert.deepEqual(queryLayers(layers, { fields: 'summary' }), {
+    layers: [{ id: 'a', name: 'text', tag: 'h2', link: 'https://x.com' }],
+  });
+});
+
+test('describeLink covers pages, anchors, and contact links', () => {
+  assert.equal(describeLink({ type: 'page', page: { id: 'p1' } }), 'page:p1');
+  assert.equal(describeLink({ type: 'url', anchor_layer_id: 'lyr_1' }), '#lyr_1');
+  assert.equal(describeLink({ type: 'page', page: { id: 'p1' }, anchor_layer_id: 'lyr_1' }), 'page:p1#lyr_1');
+  assert.equal(describeLink({ type: 'email', email: { type: 'dynamic_text', data: { content: 'a@b.co' } } }), 'mailto:a@b.co');
+  assert.equal(describeLink({ type: 'url' }), undefined);
 });

@@ -42,7 +42,7 @@ export function registerLayerTools(server: McpServer) {
 properties, text content, children, and settings.
 
 On large pages, read in pieces instead of fetching everything:
-- fields: "summary" returns only id, name, customName, html_id, text, classes, componentId
+- fields: "summary" returns only id, name, customName, html_id, tag, text, link, classes, componentId
 - depth: levels of children to include (0 = just the layers themselves); deeper levels become
   children_count
 - layer_id: return only that layer's subtree

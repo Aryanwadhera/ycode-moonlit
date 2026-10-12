@@ -25,6 +25,19 @@ const CONTENT_LEAF_TYPES = new Set([
 
 const TEXT_TYPES = new Set(['text', 'heading']);
 
+type TypeProperty = 'fontSize' | 'fontWeight' | 'lineHeight';
+type TypeSet = Record<TypeProperty, boolean>;
+
+const NO_TYPE: TypeSet = { fontSize: false, fontWeight: false, lineHeight: false };
+/** Repeated "missing trio" warnings beyond this collapse into one summary line. */
+const MAX_INDIVIDUAL_TRIO_WARNINGS = 2;
+
+interface TrioGap {
+  label: string;
+  layerName: string;
+  missing: TypeProperty[];
+}
+
 /**
  * Lint the layers touched by an edit (plus their descendants) and page-wide
  * typography variety. `touchedIds` scopes per-layer checks to what this edit
@@ -33,9 +46,16 @@ const TEXT_TYPES = new Set(['text', 'heading']);
  */
 export function lintDesign(layers: Layer[], touchedIds: Set<string>): string[] {
   const warnings: string[] = [];
+  const trioGaps: TrioGap[] = [];
   const fontSizes = new Set<string>();
 
-  const walk = (layer: Layer, inTouchedSubtree: boolean, inheritedBg: string | null, parent: Layer | null) => {
+  const walk = (
+    layer: Layer,
+    inTouchedSubtree: boolean,
+    inheritedBg: string | null,
+    inheritedType: TypeSet,
+    parent: Layer | null,
+  ) => {
     const touched = inTouchedSubtree || touchedIds.has(layer.id);
     const classes = classListOf(layer);
     // A layer with its own background overrides the inherited one. When that
@@ -45,21 +65,36 @@ export function lintDesign(layers: Layer[], touchedIds: Set<string>): string[] {
     const ownBg = backgroundOf(layer, classes);
     const bg = ownBg === undefined ? inheritedBg : ownBg;
 
+    // Font size, weight and line height cascade, so a value on any ancestor
+    // (e.g. text-sm font-semibold on a button) counts for the text inside it.
+    const ownType = typographyOf(layer, classes);
+    const type: TypeSet = {
+      fontSize: inheritedType.fontSize || ownType.fontSize,
+      fontWeight: inheritedType.fontWeight || ownType.fontWeight,
+      lineHeight: inheritedType.lineHeight || ownType.lineHeight,
+    };
+
     collectFontSize(layer, classes, fontSizes);
 
     if (touched && warnings.length < MAX_WARNINGS) {
       lintLayer(layer, classes, bg, parent, warnings);
     }
+    if (touched && TEXT_TYPES.has(layer.name)) {
+      const missing = (Object.keys(type) as TypeProperty[]).filter((key) => !type[key]);
+      if (missing.length > 0) trioGaps.push({ label: labelOf(layer), layerName: layer.name, missing });
+    }
 
     for (const child of layer.children ?? []) {
-      walk(child, touched, bg, layer);
+      walk(child, touched, bg, type, layer);
     }
   };
 
   for (const layer of layers) {
     // Pages render on a white ground unless a layer sets its own background.
-    walk(layer, false, '#ffffff', null);
+    walk(layer, false, '#ffffff', NO_TYPE, null);
   }
+
+  warnings.push(...summarizeTrioGaps(trioGaps));
 
   if (fontSizes.size > 6) {
     warnings.push(
@@ -70,6 +105,36 @@ export function lintDesign(layers: Layer[], touchedIds: Set<string>): string[] {
   return warnings.slice(0, MAX_WARNINGS);
 }
 
+function labelOf(layer: Layer): string {
+  return `[${layer.id}${layer.customName ? ` "${layer.customName}"` : ''}]`;
+}
+
+const TRIO_HINT = 'always set the full trio (fontSize, fontWeight, lineHeight) on the text or a parent.';
+
+function summarizeTrioGaps(gaps: TrioGap[]): string[] {
+  if (gaps.length <= MAX_INDIVIDUAL_TRIO_WARNINGS) {
+    return gaps.map((gap) => `${gap.label} ${gap.layerName} layer has no ${gap.missing.join('/')} — ${TRIO_HINT}`);
+  }
+  const missing = [...new Set(gaps.flatMap((gap) => gap.missing))];
+  const examples = gaps.slice(0, 3).map((gap) => gap.label).join(', ');
+  return [`${gaps.length} text layers have no ${missing.join('/')} on them or any parent (e.g. ${examples}) — ${TRIO_HINT}`];
+}
+
+/** Which of font size / weight / line height the layer sets itself (design or classes). */
+function typographyOf(layer: Layer, classes: string[]): TypeSet {
+  const typography = layer.design?.typography;
+  return {
+    fontSize: Boolean(typography?.fontSize) || classes.some((c) => /^text-(\[|xs$|sm$|base$|lg$|xl$|\dxl$)/.test(c) && !isTextColorClass(c)),
+    fontWeight: Boolean(typography?.fontWeight) || classes.some((c) => /^font-(thin|extralight|light|normal|medium|semibold|bold|extrabold|black|\[\d)/.test(c)),
+    lineHeight: Boolean(typography?.lineHeight) || classes.some((c) => c.startsWith('leading-')),
+  };
+}
+
+function isTextColorClass(cls: string): boolean {
+  const match = /^text-\[(.+)\]$/.exec(cls);
+  return Boolean(match && (parseColor(match[1]) || match[1].startsWith('var(') || match[1].startsWith('color:')));
+}
+
 function lintLayer(
   layer: Layer,
   classes: string[],
@@ -77,7 +142,7 @@ function lintLayer(
   parent: Layer | null,
   warnings: string[],
 ): void {
-  const label = `[${layer.id}${layer.customName ? ` "${layer.customName}"` : ''}]`;
+  const label = labelOf(layer);
 
   // Section structure: content must live in a container child that constrains width.
   if (layer.name === 'section' && (layer.children?.length ?? 0) > 0) {
@@ -94,17 +159,7 @@ function lintLayer(
     }
   }
 
-  // Text layers need a deliberate type treatment, not defaults.
   if (TEXT_TYPES.has(layer.name)) {
-    const typography = layer.design?.typography;
-    const missing: string[] = [];
-    if (!typography?.fontSize && !classes.some((c) => /^text-(\[|xs$|sm$|base$|lg$|xl$|\dxl$)/.test(c))) missing.push('fontSize');
-    if (!typography?.fontWeight && !classes.some((c) => /^font-(thin|extralight|light|normal|medium|semibold|bold|extrabold|black|\[)/.test(c))) missing.push('fontWeight');
-    if (!typography?.lineHeight && !classes.some((c) => c.startsWith('leading-'))) missing.push('lineHeight');
-    if (missing.length > 0) {
-      warnings.push(`${label} ${layer.name} layer has no ${missing.join('/')} — always set the full trio (fontSize, fontWeight, lineHeight).`);
-    }
-
     // Contrast: only when both text color and effective background resolve to literal colors.
     const color = parseColor(layer.design?.typography?.color) ?? parseColorClass(classes, 'text-');
     const bg = effectiveBg ? parseColor(effectiveBg) : null;

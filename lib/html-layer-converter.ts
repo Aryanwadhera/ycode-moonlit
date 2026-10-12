@@ -44,6 +44,17 @@ export interface HtmlImportOptions {
   refs?: Record<string, string>;
   /** Html ids already on the target page, so `href="#id"` links to them become native anchors. */
   anchorIds?: Iterable<string>;
+  /**
+   * Receives every element marked `data-ycode-component="Name"`, in document
+   * order. Without it the attribute is dropped with a warning.
+   */
+  componentMarks?: HtmlComponentMark[];
+}
+
+export interface HtmlComponentMark {
+  name: string;
+  layerId: string;
+  path: string;
 }
 
 interface PendingAnchor {
@@ -56,8 +67,12 @@ interface ImportContext {
   warnings: HtmlImportWarning[] | null;
   rescaleSizes: boolean;
   refs: Record<string, string>;
+  /** Ref keys assigned from tag names, which explicit ids/data-refs may take over. */
+  tagRefs: Set<string>;
+  tagRefCounts: Record<string, number>;
   htmlIds: Set<string>;
   pendingAnchors: PendingAnchor[];
+  componentMarks: HtmlComponentMark[] | null;
 }
 
 function warn(ctx: ImportContext, path: string, message: string, layerId?: string): void {
@@ -451,6 +466,13 @@ function cleanDesign(design: Layer['design']): Layer['design'] | undefined {
   return hasValues ? (cleaned as Layer['design']) : undefined;
 }
 
+function defaultDisplayOf(el: Element): string {
+  const tag = el.tagName.toLowerCase();
+  if (tag === 'button' || tag === 'img' || tag === 'input' || tag === 'select' || tag === 'textarea') return 'inline-block';
+  if (INLINE_TEXT_TAGS.has(tag) || tag === 'label') return 'inline';
+  return 'block';
+}
+
 function resolveImportClasses(el: Element, ctx: ImportContext, path: string, layerId: string): string {
   const classAttr = el.getAttribute('class') || '';
   const styleAttr = el.getAttribute('style') || '';
@@ -462,7 +484,7 @@ function resolveImportClasses(el: Element, ctx: ImportContext, path: string, lay
   const normalized = normalizeV3ToV4(merged, { rescaleSizes: ctx.rescaleSizes });
   const named = resolveNamedColors(normalized);
   const withGradients = convertGradientClasses(normalizePositionClasses(named));
-  const { classes: resolved, approximated } = convertMobileFirstClasses(withGradients);
+  const { classes: resolved, approximated } = convertMobileFirstClasses(withGradients, defaultDisplayOf(el));
 
   if (ctx.warnings) {
     warnDroppedStyles(styleAttr, ctx, path, layerId);
@@ -580,7 +602,7 @@ function warnDroppedAttributes(el: Element, tag: string, ctx: ImportContext, pat
   const imported = IMPORTED_ATTRS[tag] || [];
   const dropped = Array.from(el.attributes)
     .map((attr) => attr.name)
-    .filter((name) => name !== 'class' && name !== 'style' && name !== 'data-ref' && !imported.includes(name)
+    .filter((name) => name !== 'class' && name !== 'style' && name !== 'data-ref' && name !== COMPONENT_ATTRIBUTE && !imported.includes(name)
       && !(name === 'id' && !ID_DROPPING_TAGS.has(tag)));
   if (dropped.length > 0) {
     warn(ctx, path, `Attributes dropped from <${tag}>: ${dropped.join(', ')}`, layerId);
@@ -596,7 +618,25 @@ function warnRelativeSrc(el: Element, tag: string, ctx: ImportContext, path: str
   }
 }
 
+const COMPONENT_ATTRIBUTE = 'data-ycode-component';
+
+/** Landmark tags that get a ref even without an id: first <header> → "header", second → "header[2]". */
+const TAG_REF_TAGS = new Set(['header', 'footer', 'nav', 'main', 'aside', 'section']);
+
+/** Numbered in document order across all elements of the tag, so "section[3]" is the third <section>. */
+function addTagRef(ctx: ImportContext, tag: string, layerId: string, isNamed: boolean): void {
+  const n = (ctx.tagRefCounts[tag] = (ctx.tagRefCounts[tag] ?? 0) + 1);
+  const key = n === 1 ? tag : `${tag}[${n}]`;
+  if (isNamed || ctx.refs[key]) return;
+  ctx.refs[key] = layerId;
+  ctx.tagRefs.add(key);
+}
+
 function addRef(ctx: ImportContext, ref: string, layerId: string, path: string): void {
+  if (ctx.tagRefs.delete(ref)) {
+    ctx.refs[ref] = layerId;
+    return;
+  }
   if (ctx.refs[ref]) {
     warn(ctx, path, `Duplicate id/data-ref "${ref}"; the returned refs point to the last element using it`, layerId);
   }
@@ -633,6 +673,13 @@ function elementToLayer(el: Element, ctx: ImportContext, path: string): Layer | 
 
   const ref = el.getAttribute('data-ref')?.trim();
   if (ref) addRef(ctx, ref, layerId, path);
+  if (TAG_REF_TAGS.has(tag)) addTagRef(ctx, tag, layerId, Boolean(ref || el.getAttribute('id')));
+
+  const componentName = el.getAttribute(COMPONENT_ATTRIBUTE)?.trim();
+  if (componentName) {
+    if (ctx.componentMarks) ctx.componentMarks.push({ name: componentName, layerId, path });
+    else warn(ctx, path, `${COMPONENT_ATTRIBUTE} is only supported by the MCP import and was ignored`, layerId);
+  }
 
   const rawDesign = classes ? classesToDesign(classes) : undefined;
   const design = cleanDesign(rawDesign);
@@ -909,8 +956,11 @@ export function documentToLayers(doc: Document, options: HtmlImportOptions = {})
     warnings: options.warnings ?? null,
     rescaleSizes: !options.tailwindV4,
     refs: options.refs ?? {},
+    tagRefs: new Set(),
+    tagRefCounts: {},
     htmlIds: new Set(),
     pendingAnchors: [],
+    componentMarks: options.componentMarks ?? null,
   };
 
   // Parsers hoist <style>, <link>, <title>, etc. into <head>, out of the body walk

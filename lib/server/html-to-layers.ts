@@ -9,7 +9,7 @@
 import { parseHTML } from 'linkedom';
 
 import { documentToLayers } from '@/lib/html-layer-converter';
-import type { HtmlImportWarning } from '@/lib/html-layer-converter';
+import type { HtmlComponentMark, HtmlImportWarning } from '@/lib/html-layer-converter';
 import type { Layer } from '@/types';
 
 export interface ServerHtmlImportResult {
@@ -17,6 +17,8 @@ export interface ServerHtmlImportResult {
   warnings: HtmlImportWarning[];
   /** `{ [html id or data-ref]: layerId }` for the imported elements that have one */
   refs: Record<string, string>;
+  /** Elements marked `data-ycode-component="Name"`, in document order */
+  componentMarks: HtmlComponentMark[];
 }
 
 export interface ServerHtmlImportOptions {
@@ -35,11 +37,13 @@ export function htmlToLayersOnServer(html: string, options: ServerHtmlImportOpti
 
   const warnings: HtmlImportWarning[] = [];
   const refs: Record<string, string> = {};
+  const componentMarks: HtmlComponentMark[] = [];
   const layers = documentToLayers(document as unknown as Document, {
     warnings,
     refs,
+    componentMarks,
     tailwindV4: true,
     anchorIds: options.anchorIds,
   });
-  return { layers, warnings, refs };
+  return { layers, warnings, refs, componentMarks };
 }
