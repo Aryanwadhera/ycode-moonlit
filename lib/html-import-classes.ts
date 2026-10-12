@@ -128,6 +128,50 @@ const MOBILE_FIRST_TIERS = ['sm', 'md', 'lg'] as const;
 type Tier = 'base' | (typeof MOBILE_FIRST_TIERS)[number];
 const CONVERTIBLE_STATES = new Set(['hover', 'focus', 'active', 'disabled', 'current', 'visited']);
 
+/**
+ * Class reproducing the browser default for a property, used as the mobile
+ * value when a breakpoint class has no un-prefixed counterpart (md:col-span-2
+ * alone means "1 column below md"). Inherited properties (font, color) are
+ * absent on purpose: their default is the parent's value, not a constant.
+ */
+const MOBILE_DEFAULTS: Record<string, string> = {
+  flexDirection: 'flex-row',
+  flexWrap: 'flex-nowrap',
+  justifyContent: 'justify-start',
+  alignItems: 'items-stretch',
+  alignSelf: 'self-auto',
+  order: 'order-none',
+  gap: 'gap-[0px]',
+  columnGap: 'gap-x-0',
+  rowGap: 'gap-y-0',
+  gridTemplateColumns: 'grid-cols-1',
+  gridColumnSpan: 'col-span-1',
+  gridRowSpan: 'row-span-1',
+  padding: 'p-[0px]',
+  paddingX: 'px-0',
+  paddingY: 'py-0',
+  paddingTop: 'pt-0',
+  paddingRight: 'pr-0',
+  paddingBottom: 'pb-0',
+  paddingLeft: 'pl-0',
+  margin: 'm-[0px]',
+  marginX: 'mx-0',
+  marginY: 'my-0',
+  marginTop: 'mt-0',
+  marginRight: 'mr-0',
+  marginBottom: 'mb-0',
+  marginLeft: 'ml-0',
+  width: 'w-auto',
+  height: 'h-auto',
+  maxWidth: 'max-w-none',
+  textAlign: 'text-left',
+  position: 'static',
+  top: 'top-[auto]',
+  right: 'right-[auto]',
+  bottom: 'bottom-[auto]',
+  left: 'left-[auto]',
+};
+
 interface ResponsiveGroup {
   values: Partial<Record<Tier, string>>;
   indexes: number[];
@@ -138,10 +182,15 @@ interface ResponsiveGroup {
  * Rewrites mobile-first breakpoint classes to Ycode's desktop-first model,
  * per design property: desktop takes the lg (else md/sm/base) value, tablet
  * (max-lg) the md (else sm/base) value, and mobile (max-md) the base value.
- * Groups that can't be expressed (no base value, unknown utilities, xl/2xl,
+ * A missing base value falls back to the property's browser default
+ * (`displayDefault` for display, which depends on the element). Groups that
+ * can't be expressed (no base value or default, unknown utilities, xl/2xl,
  * other variants, or already desktop-first) are left unchanged.
  */
-export function convertMobileFirstClasses(classes: string[]): { classes: string[]; approximated: string[] } {
+export function convertMobileFirstClasses(
+  classes: string[],
+  displayDefault = 'block',
+): { classes: string[]; approximated: string[] } {
   const groups = new Map<string, ResponsiveGroup>();
   const blocked = new Set<string>();
 
@@ -172,10 +221,14 @@ export function convertMobileFirstClasses(classes: string[]): { classes: string[
   const approximated: string[] = [];
 
   for (const [key, group] of groups) {
-    const { base, sm, md, lg } = group.values;
-    if (blocked.has(key) || base === undefined || (sm === undefined && md === undefined && lg === undefined)) continue;
+    const { sm, md, lg } = group.values;
+    if (blocked.has(key) || (sm === undefined && md === undefined && lg === undefined)) continue;
 
     const state = key.slice(0, key.indexOf('|'));
+    const property = key.slice(key.indexOf('|') + 1);
+    const fallback = state ? undefined : (property === 'display' ? displayDefault : MOBILE_DEFAULTS[property]);
+    const base = group.values.base ?? fallback;
+    if (base === undefined) continue;
     const withState = (bp: string | null, value: string) => joinVariants([...(bp ? [bp] : []), ...(state ? [state] : [])], value);
 
     const desktop = lg ?? md ?? sm ?? base;

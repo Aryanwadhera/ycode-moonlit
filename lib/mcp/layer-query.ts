@@ -5,7 +5,7 @@
 
 import { getClassesString } from '@/lib/layer-utils';
 import { extractPlainTextFromTiptap } from '@/lib/tiptap-utils';
-import type { Layer } from '@/types';
+import type { Layer, LinkSettings } from '@/types';
 
 export type LayerFields = 'full' | 'summary';
 
@@ -21,7 +21,9 @@ export interface LayerSummary {
   name: string;
   customName?: string;
   html_id?: string;
+  tag?: string;
   text?: string;
+  link?: string;
   classes?: string;
   componentId?: string;
   children?: unknown[];
@@ -60,16 +62,38 @@ function getHtmlId(layer: Layer): string | undefined {
   return typeof htmlId === 'string' && htmlId ? htmlId : undefined;
 }
 
+/** One-line link target: a URL, "mailto:"/"tel:", "page:<id>", "asset:<id>", "field", or "#<layer id>". */
+export function describeLink(link: LinkSettings | undefined): string | undefined {
+  if (!link) return undefined;
+  const anchor = link.anchor_layer_id ? `#${link.anchor_layer_id}` : '';
+  const target = (() => {
+    switch (link.type) {
+      case 'url': return link.url?.data?.content ?? '';
+      case 'email': return link.email?.data?.content ? `mailto:${link.email.data.content}` : '';
+      case 'phone': return link.phone?.data?.content ? `tel:${link.phone.data.content}` : '';
+      case 'page': return link.page?.id ? `page:${link.page.id}` : '';
+      case 'asset': return link.asset?.id ? `asset:${link.asset.id}` : '';
+      case 'field': return 'field';
+      default: return '';
+    }
+  })();
+  return target || anchor ? `${target}${anchor}` : undefined;
+}
+
 function summarize(layer: Layer): LayerSummary {
   const text = getLayerPlainText(layer);
   const classes = getClassesString(layer);
   const htmlId = getHtmlId(layer);
+  const tag = layer.settings?.tag;
+  const link = describeLink(layer.variables?.link);
   return {
     id: layer.id,
     name: layer.name,
     ...(layer.customName ? { customName: layer.customName } : {}),
     ...(htmlId ? { html_id: htmlId } : {}),
+    ...(tag ? { tag } : {}),
     ...(text ? { text: text.length > MAX_SUMMARY_TEXT ? `${text.slice(0, MAX_SUMMARY_TEXT)}…` : text } : {}),
+    ...(link ? { link } : {}),
     ...(classes ? { classes } : {}),
     ...(layer.componentId ? { componentId: layer.componentId } : {}),
   };

@@ -61,6 +61,7 @@ const TypographyControls = memo(function TypographyControls({ layer, onLayerUpda
   const lineHeight = getDesignProperty('typography', 'lineHeight') || '';
   const color = getDesignProperty('typography', 'color') || '';
   const textTransform = getDesignProperty('typography', 'textTransform') || 'none';
+  const fontStyle = getDesignProperty('typography', 'fontStyle') || '';
   const textDecoration = getDesignProperty('typography', 'textDecoration') || 'none';
   const textDecorationColor = getDesignProperty('typography', 'textDecorationColor') || '';
   const textDecorationThickness = getDesignProperty('typography', 'textDecorationThickness') || '';
@@ -75,6 +76,8 @@ const TypographyControls = memo(function TypographyControls({ layer, onLayerUpda
 
   // Detect if underline is active
   const hasUnderline = textDecoration === 'underline';
+
+  const hasFontStyle = fontStyle !== '';
 
   // Detect if text transform is active
   const hasTransform = textTransform !== 'none' && textTransform !== '';
@@ -223,6 +226,18 @@ const TypographyControls = memo(function TypographyControls({ layer, onLayerUpda
     ]);
   };
 
+  const handleAddFontStyle = () => {
+    updateDesignProperty('typography', 'fontStyle', 'italic');
+  };
+
+  const handleRemoveFontStyle = () => {
+    updateDesignProperty('typography', 'fontStyle', null);
+  };
+
+  const handleFontStyleChange = (value: string) => {
+    updateDesignProperty('typography', 'fontStyle', value);
+  };
+
   const handleAddTransform = () => {
     updateDesignProperty('typography', 'textTransform', 'uppercase');
   };
@@ -354,6 +369,12 @@ const TypographyControls = memo(function TypographyControls({ layer, onLayerUpda
                 disabled={hasUnderline}
               >
                 Underline
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={handleAddFontStyle}
+                disabled={hasFontStyle}
+              >
+                Italic
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={handleAddTransform}
@@ -651,6 +672,36 @@ const TypographyControls = memo(function TypographyControls({ layer, onLayerUpda
                 type="button"
                 className="p-0.5 rounded-sm opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
                 onClick={handleRemoveUnderline}
+              >
+                <Icon name="x" className="size-2.5" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!isIcon && hasFontStyle && (
+          <div className="grid grid-cols-3 items-start">
+            <Label variant="muted" className="h-8">Style</Label>
+            <div className="col-span-2 flex items-center gap-2">
+              <Select
+                value={fontStyle}
+                onValueChange={handleFontStyleChange}
+              >
+                <SelectTrigger className="flex-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem value="italic">Italic</SelectItem>
+                    <SelectItem value="normal">Normal</SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+              <button
+                type="button"
+                className="p-0.5 rounded-sm opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
+                onClick={handleRemoveFontStyle}
+                aria-label="Remove font style"
               >
                 <Icon name="x" className="size-2.5" />
               </button>

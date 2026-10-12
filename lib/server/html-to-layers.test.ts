@@ -35,7 +35,7 @@ test('imports a section as native layers with Tailwind classes and desktop desig
 test('warns about everything dropped or converted lossily', () => {
   const found = messages(`
     <style>.x{color:red}</style>
-    <div class="space-y-4 md:p-[8px] group-hover:opacity-50" data-test="x">
+    <div class="space-y-4 md:text-[20px] group-hover:opacity-50" data-test="x">
       <img src="/hero.png" alt="Hero">
       <p>Hello <span class="text-[#f00]">world</span></p>
       <select name="plan"><option>Pro</option></select>
@@ -133,6 +133,22 @@ test('returns refs for ids and data-ref without keeping data-ref', () => {
   assert.deepEqual(warnings, []);
 });
 
+test('returns refs for landmark tags without an id', () => {
+  const { layers, refs } = htmlToLayersOnServer(`
+    <header>h</header><section>a</section><section id="pricing">b</section><section>c</section>
+    <section data-ref="section">d</section><footer>f</footer>`);
+
+  const [header, first, pricing, third, named, footer] = layers;
+  assert.deepEqual(refs, {
+    header: header.id,
+    section: named.id,
+    pricing: pricing.id,
+    'section[3]': third.id,
+    footer: footer.id,
+  });
+  assert.notEqual(refs.section, first.id);
+});
+
 test('imports mobile-first, gradient and inset classes as editable design', () => {
   const { layers, warnings } = htmlToLayersOnServer(`
     <section class="relative flex flex-col md:flex-row antialiased bg-linear-to-r from-blue-500 to-white">
@@ -171,4 +187,11 @@ test('classesToDesign reads font-[…] as a weight only when numeric', () => {
   assert.deepEqual(typography("font-['Instrument_Serif']"), { fontFamily: 'Instrument Serif', fontWeight: undefined });
   assert.deepEqual(typography('font-semibold font-[Inter]'), { fontFamily: 'Inter', fontWeight: '600' });
   assert.deepEqual(typography('font-[650]'), { fontFamily: undefined, fontWeight: '650' });
+});
+
+test('italic imports as an editable font style', () => {
+  const { layers, warnings } = htmlToLayersOnServer('<p class="italic text-[18px]">Quote</p>');
+  assert.equal(layers[0].design?.typography?.fontStyle, 'italic');
+  assert.deepEqual(warnings, []);
+  assert.equal(classesToDesign('not-italic')?.typography?.fontStyle, 'normal');
 });

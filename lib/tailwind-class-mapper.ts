@@ -321,6 +321,7 @@ const CLASS_PROPERTY_MAP: Record<string, RegExp> = {
   textWrap: /^text-(wrap|nowrap|balance|pretty)$/,
   fontVariantNumeric: /^(normal-nums|ordinal|slashed-zero|lining-nums|oldstyle-nums|proportional-nums|tabular-nums|diagonal-fractions|stacked-fractions)$/,
   textTransform: /^(uppercase|lowercase|capitalize|normal-case)$/,
+  fontStyle: /^(italic|not-italic)$/,
   textDecoration: /^(underline|overline|line-through|no-underline)$/,
   textDecorationColor: /^decoration-\[.+\](\/\d+)?$/,
   textDecorationThickness: /^decoration-(\d+|auto|from-font|\[(?!#|rgb|hsl).+\])$/,
@@ -815,6 +816,8 @@ export function propertyToClass(
       case 'textTransform':
         if (value === 'none') return 'normal-case';
         return value; // uppercase, lowercase, capitalize
+      case 'fontStyle':
+        return value === 'italic' ? 'italic' : 'not-italic';
       case 'textDecoration':
         if (value === 'none') return 'no-underline';
         return value; // underline, line-through, overline
@@ -1615,6 +1618,9 @@ export function classesToDesign(classes: string | string[]): Layer['design'] {
     if (cls === 'lowercase') design.typography!.textTransform = 'lowercase';
     if (cls === 'capitalize') design.typography!.textTransform = 'capitalize';
     if (cls === 'normal-case') design.typography!.textTransform = 'none';
+
+    if (cls === 'italic') design.typography!.fontStyle = 'italic';
+    if (cls === 'not-italic') design.typography!.fontStyle = 'normal';
 
     // Text Decoration
     if (cls === 'underline') design.typography!.textDecoration = 'underline';
