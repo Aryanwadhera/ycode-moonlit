@@ -240,8 +240,9 @@ touches more than one layer, use the op inside one batch instead of the single t
   \`select\` children (never simulated fields — see Element Types).
 - **HTML import (opt-in):** only when the user asks for it or provides HTML, import_html turns
   HTML + Tailwind into native layers in one call. Default to add_layout and the layer tools otherwise.
-  Import section by section, target layers through the returned refs (id / data-ref), and redo a
-  section with replace_layer_id instead of deleting and re-importing.
+  Import section by section, target layers through the returned refs (id / data-ref / tag), and redo a
+  section with replace_layer_id instead of deleting and re-importing. Mark repeated blocks (navbar,
+  card, footer) with data-ycode-component="Name" to import them as components.
 
 ### Animations & Interactions
 

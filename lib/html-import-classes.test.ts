@@ -26,8 +26,18 @@ test('reports sm: values it can only approximate', () => {
   assert.deepEqual(result.approximated, ['sm:px-6']);
 });
 
+test('fills a missing base value with the browser default', () => {
+  assert.deepEqual(convert('md:col-span-2').classes, ['col-span-2', 'max-md:col-span-1']);
+  assert.deepEqual(convert('md:w-1/2 lg:p-8').classes, ['w-1/2', 'max-md:w-auto', 'p-8', 'max-lg:p-[0px]']);
+  assert.deepEqual(convert('flex flex-col md:flex-row').classes, ['flex', 'flex-row', 'max-md:flex-col']);
+  assert.deepEqual(convert('md:flex-row').classes, ['flex-row']);
+  assert.deepEqual(convert('md:flex').classes, ['flex', 'max-md:block']);
+  assert.deepEqual(convertMobileFirstClasses(['md:flex'], 'inline').classes, ['flex', 'max-md:inline']);
+});
+
 test('leaves groups it cannot express unchanged', () => {
-  assert.deepEqual(convert('md:w-1/2 p-4').classes, ['md:w-1/2', 'p-4']);
+  assert.deepEqual(convert('md:text-[20px] p-4').classes, ['md:text-[20px]', 'p-4']);
+  assert.deepEqual(convert('md:hover:bg-[#111]').classes, ['md:hover:bg-[#111]']);
   assert.deepEqual(convert('p-4 md:p-8 xl:p-12').classes, ['p-4', 'md:p-8', 'xl:p-12']);
   assert.deepEqual(convert('space-y-4 md:space-y-8').classes, ['space-y-4', 'md:space-y-8']);
   assert.deepEqual(convert('flex max-md:flex-col').classes, ['flex', 'max-md:flex-col']);

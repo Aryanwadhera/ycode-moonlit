@@ -614,6 +614,10 @@ function mapClassToDesignValue(className: string, property: string): string | un
 
   // Full-class mappings for properties where the entire class maps to a value
   const fullClassMappings: Record<string, Record<string, string>> = {
+    fontStyle: {
+      'italic': 'italic',
+      'not-italic': 'normal',
+    },
     transitionProperty: {
       'transition': 'default',
       'transition-all': 'all',

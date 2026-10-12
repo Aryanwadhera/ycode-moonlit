@@ -1,11 +1,13 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
-import { broadcastComponentLayersUpdated } from '@/lib/mcp/broadcast';
+import { broadcastComponentCreated, broadcastComponentLayersUpdated } from '@/lib/mcp/broadcast';
 import { collectFontFamiliesFromDesign, ensureFontsInstalled, fontWarnings } from '@/lib/mcp/font-install';
+import { extractMarkedComponents } from '@/lib/mcp/html-import-components';
+import type { ImportedComponent } from '@/lib/mcp/html-import-components';
 import { getCachedLayers, saveCachedLayers } from '@/lib/mcp/page-layers';
 import { canHaveChildren, findLayerById, generateId, insertLayer, removeLayer } from '@/lib/mcp/utils';
-import { getComponentById, updateComponent } from '@/lib/repositories/componentRepository';
+import { createComponent, getAllComponents, getComponentById, updateComponent } from '@/lib/repositories/componentRepository';
 import { htmlToLayersOnServer } from '@/lib/server/html-to-layers';
 import type { HtmlImportWarning } from '@/lib/html-layer-converter';
 import type { ComponentVariant, Layer } from '@/types';
@@ -117,9 +119,10 @@ Use ONLY when the user asks for HTML import or provides HTML/Tailwind markup. Ot
 add_layout and the layer tools (add_layer, batch_operations, update_layer_design).
 
 Prefer desktop-first classes: unprefixed for desktop, "max-lg:" for tablet, "max-md:" for mobile.
-Mobile-first "sm:"/"md:"/"lg:" classes are converted automatically when the same property also has
-an unprefixed value ("flex-col md:flex-row" → "flex-row max-md:flex-col"); the rest stay raw and
-are reported. v4 gradients (bg-linear-to-* + from/via/to) and inset-*/top-* values are converted to
+Mobile-first "sm:"/"md:"/"lg:" classes are converted automatically ("flex-col md:flex-row" →
+"flex-row max-md:flex-col"). Without an unprefixed value, the mobile value is the CSS default
+("md:col-span-2" → "col-span-2 max-md:col-span-1"); font and color classes need an explicit base and
+otherwise stay raw and are reported. v4 gradients (bg-linear-to-* + from/via/to) and inset-*/top-* values are converted to
 editable design too. Reference color variables as
 "bg-[var(--<id>)]" / "text-[var(--<id>)]". Images need absolute https URLs (or upload_asset first,
 then update_layer_image).
@@ -133,7 +136,16 @@ LINKS: href="#id" becomes a native anchor link when an element with that id is i
 already on the page.
 
 REFS: elements with an id or data-ref="name" are returned in "refs" as { name: layer_id }, so you
-can target them afterwards without get_layers. data-ref is not kept on the layer.
+can target them afterwards without get_layers. data-ref is not kept on the layer. header, footer, nav,
+main, aside and section elements without one are returned by tag in document order: the first
+<section> is "section", the third "section[3]".
+
+COMPONENTS (page imports only): data-ycode-component="Name" on an element creates a component from
+it and leaves an instance in its place. Returned in "components" as
+{ Name: { component_id, created, instance_layer_ids, refs } } — refs inside the component point at
+master layers; edit them with update_component_layers. A name that matches an existing component, or
+repeats within the HTML, becomes another instance of it (its own markup is discarded), so mark one
+copy and give per-instance content through component variables afterwards.
 
 ITERATING: pass replace_layer_id to swap an existing layer (e.g. a section you imported earlier) for
 the new HTML in one atomic step, at the same position. Pass dry_run: true to get the layer count and
@@ -141,7 +153,7 @@ warnings without changing anything. Import large pages section by section.
 
 Returns the ids of the created top-level layers plus warnings for anything dropped or converted
 lossily (attributes, unknown tags, relative media, classes without a design-panel control). Fix
-those with the layer tools. CMS bindings, components, animations, and form settings are not
+those with the layer tools. CMS bindings, component variables, animations, and form settings are not
 expressible in HTML; add them afterwards with their tools.`,
     {
       page_id: z.string().optional().describe('Page to import into. Provide page_id or component_id.'),
@@ -212,27 +224,39 @@ expressible in HTML; add them afterwards with their tools.`,
         parentId ??= tree.find((l) => l.id === 'body' || l.name === 'body')?.id;
       }
 
-      const { layers: imported, warnings, refs } = htmlToLayersOnServer(html, {
+      const converted = htmlToLayersOnServer(html, {
         anchorIds: collectHtmlIds(baseTree),
       });
-      if (imported.length === 0) {
+      const { warnings, componentMarks } = converted;
+      if (converted.layers.length === 0) {
         return errorResult('The HTML produced no layers. Check that it contains elements inside <body> (or is a plain fragment).');
       }
 
-      const updated = insertLayers(baseTree, parentId, imported, insertAt);
-      if (typeof updated === 'string') return errorResult(updated);
+      if (componentMarks.length > 0 && !page_id) {
+        for (const mark of componentMarks) {
+          warnings.push({ message: 'data-ycode-component only works when importing into a page; ignored', path: mark.path, layerId: mark.layerId });
+        }
+      }
+      const extractComponents = componentMarks.length > 0 && !!page_id && !dry_run;
 
-      const { groups, omitted } = groupWarnings(warnings);
-      const total = countLayers(imported);
-      const refKeys = Object.keys(refs);
+      const fontFamilies = new Set<string>();
+      collectFontFamilies(converted.layers, fontFamilies);
+      const total = countLayers(converted.layers);
+      const topLevelCount = converted.layers.length;
 
       if (dry_run) {
+        const updated = insertLayers(baseTree, parentId, converted.layers, insertAt);
+        if (typeof updated === 'string') return errorResult(updated);
+        const { groups, omitted } = groupWarnings(warnings);
+        const refKeys = Object.keys(converted.refs);
+        const componentNames = page_id ? [...new Set(componentMarks.map((m) => m.name))] : [];
         return {
           content: [{
             type: 'text' as const,
             text: JSON.stringify({
-              message: `Dry run: would import ${imported.length} top-level layer(s) (${total} total) into ${target}${replace_layer_id ? `, replacing ${replace_layer_id}` : ''}. Nothing was saved.`,
+              message: `Dry run: would import ${topLevelCount} top-level layer(s) (${total} total) into ${target}${replace_layer_id ? `, replacing ${replace_layer_id}` : ''}. Nothing was saved.`,
               ref_names: refKeys.length > 0 ? refKeys : undefined,
+              component_names: componentNames.length > 0 ? componentNames : undefined,
               warning_count: warnings.length,
               warnings: groups.length > 0 ? groups : undefined,
               warnings_omitted: omitted > 0 ? omitted : undefined,
@@ -241,10 +265,32 @@ expressible in HTML; add them afterwards with their tools.`,
         };
       }
 
+      let imported = converted.layers;
+      let refs = converted.refs;
+      let components: Record<string, ImportedComponent> = {};
+      if (extractComponents) {
+        // Validate the placement before creating components, so a bad parent doesn't leave orphans.
+        const check = insertLayers(baseTree, parentId, imported, insertAt);
+        if (typeof check === 'string') return errorResult(check);
+
+        const existing = await getAllComponents();
+        const extraction = await extractMarkedComponents(imported, componentMarks, refs, existing, async (name, layers) => {
+          const component = await createComponent({ name, layers });
+          broadcastComponentCreated(component).catch(() => {});
+          return component.id;
+        });
+        imported = extraction.layers;
+        refs = extraction.refs;
+        components = extraction.components;
+        warnings.push(...extraction.warnings);
+      }
+
+      const updated = insertLayers(baseTree, parentId, imported, insertAt);
+      if (typeof updated === 'string') return errorResult(updated);
       await saveTree(updated);
 
-      const fontFamilies = new Set<string>();
-      collectFontFamilies(imported, fontFamilies);
+      const { groups, omitted } = groupWarnings(warnings);
+      const refKeys = Object.keys(refs);
       const fonts = await ensureFontsInstalled(fontFamilies);
       const designWarnings = fontWarnings(fonts);
 
@@ -252,10 +298,11 @@ expressible in HTML; add them afterwards with their tools.`,
         content: [{
           type: 'text' as const,
           text: JSON.stringify({
-            message: `Imported ${imported.length} top-level layer(s) (${total} total) into ${target}${replace_layer_id ? `, replacing ${replace_layer_id}` : ''}`,
+            message: `Imported ${topLevelCount} top-level layer(s) (${total} total) into ${target}${replace_layer_id ? `, replacing ${replace_layer_id}` : ''}`,
             layer_ids: imported.map((l) => l.id),
             parent_layer_id: parentId ?? null,
             refs: refKeys.length > 0 ? refs : undefined,
+            components: Object.keys(components).length > 0 ? components : undefined,
             warning_count: warnings.length,
             warnings: groups.length > 0 ? groups : undefined,
             warnings_omitted: omitted > 0 ? omitted : undefined,
