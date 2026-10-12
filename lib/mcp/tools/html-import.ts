@@ -118,14 +118,18 @@ export function registerHtmlImportTools(server: McpServer) {
 Use ONLY when the user asks for HTML import or provides HTML/Tailwind markup. Otherwise build with
 add_layout and the layer tools (add_layer, batch_operations, update_layer_design).
 
-Prefer desktop-first classes: unprefixed for desktop, "max-lg:" for tablet, "max-md:" for mobile.
-Mobile-first "sm:"/"md:"/"lg:" classes are converted automatically ("flex-col md:flex-row" →
-"flex-row max-md:flex-col"). Without an unprefixed value, the mobile value is the CSS default
-("md:col-span-2" → "col-span-2 max-md:col-span-1"); font and color classes need an explicit base and
-otherwise stay raw and are reported. v4 gradients (bg-linear-to-* + from/via/to) and inset-*/top-* values are converted to
-editable design too. Reference color variables as
-"bg-[var(--<id>)]" / "text-[var(--<id>)]". Images need absolute https URLs (or upload_asset first,
-then update_layer_image).
+CLASSES: both mobile-first ("sm:"/"md:"/"lg:") and desktop-first (unprefixed = desktop, "max-lg:" =
+tablet, "max-md:" = mobile) Tailwind work. Mobile-first classes are converted to desktop-first
+automatically ("flex-col md:flex-row" → "flex-row max-md:flex-col"); without an unprefixed value the
+mobile value is the CSS default ("md:col-span-2" → "col-span-2 max-md:col-span-1"). Only font and color
+classes need an explicit base value; otherwise they stay raw and are reported. "xl:"/"2xl:" have no
+Ycode breakpoint and stay raw. v4 gradients (bg-linear-to-* + from/via/to), inset-*/top-*, and italic
+convert to editable design too. Reference color variables as "bg-[var(--<id>)]" / "text-[var(--<id>)]".
+
+FONTS: Google Fonts used via font-['Family_Name'] are installed automatically (see
+fonts_auto_installed in the response) — no add_font call needed.
+
+IMAGES: need absolute https URLs (or upload_asset first, then update_layer_image).
 
 STRUCTURE: every element becomes a layer, except inline tags (a, span, strong, …) inside running
 text, which merge into the text as rich-text marks and lose their classes. Inline elements that are
