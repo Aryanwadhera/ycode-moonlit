@@ -2909,17 +2909,33 @@ export async function resolveCollectionLayers(
                 }
               }
 
+              // Resolve the layer's own bindings (e.g. a background image bound
+              // to the item's image field). Leaving them for render time breaks
+              // published pages, which strip _collectionItemValues before the
+              // client boundary. Children are already injected above.
+              const layerWithOwnData = await injectCollectionData(
+                {
+                  ...layer,
+                  variables: { ...layer.variables, collection: undefined },
+                  children: [],
+                },
+                enhancedValues,
+                collectionFields,
+                isPublished,
+                updatedLayerDataMap,
+                rawEnhancedValues,
+                timezone,
+                globalsData,
+                globalsMeta
+              );
+
               // Build the cloned layer with original IDs first
               const clonedLayer: Layer = {
-                ...layer,
+                ...layerWithOwnData,
                 attributes: {
                   ...layer.attributes,
                   'data-collection-item-id': item.id,
                 } as Record<string, any>,
-                variables: {
-                  ...layer.variables,
-                  collection: undefined,
-                },
                 children: injectedChildren,
                 _collectionItemValues: filteredValues,
                 _collectionItemId: item.id,
