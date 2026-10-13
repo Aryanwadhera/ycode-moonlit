@@ -1,10 +1,10 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-/* AI tool descriptions document class syntax with placeholders such as
-   "text-[var(--<id>)]", which compile to invalid CSS and fail the build.
-   They style nothing: generated sites are compiled server-side and the
-   canvas uses the Tailwind browser build. */
+/* AI tool descriptions document color-variable class syntax using angle-bracket
+   id placeholders, which compile to invalid CSS and fail the build. They style
+   nothing: generated sites are compiled server-side and the canvas uses the
+   Tailwind browser build. */
 @source not "../lib/mcp";
 @source not "../lib/agent";
 

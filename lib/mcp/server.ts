@@ -9,6 +9,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ZodRawShape } from 'zod';
 import { DEFERRED_GROUP_GUIDES, MCP_PUBLISHING_INSTRUCTIONS, SYSTEM_INSTRUCTIONS } from '@/lib/mcp/instructions';
 import { withToolAnnotations } from '@/lib/mcp/tool-annotations';
+import packageJson from '@/package.json';
 import { registerPageTools } from '@/lib/mcp/tools/pages';
 import { registerPageFolderTools } from '@/lib/mcp/tools/page-folders';
 import { registerLayerTools } from '@/lib/mcp/tools/layers';
@@ -60,7 +61,7 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
     + (options.extraInstructions ? '\n\n' + options.extraInstructions : '');
 
   const rawServer = new McpServer(
-    { name: 'ycode', version: '1.0.0' },
+    { name: 'ycode', version: packageJson.version },
     { instructions },
   );
 

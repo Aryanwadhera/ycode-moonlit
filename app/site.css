@@ -19,6 +19,13 @@
    sidebar/modal/dropdown utilities by excluding the route group. */
 @source not "../app/(builder)";
 
+/* AI tool descriptions document color-variable class syntax using angle-bracket
+   id placeholders, which compile to invalid CSS and fail the build. They style
+   nothing: generated sites are compiled server-side and the canvas uses the
+   Tailwind browser build. */
+@source not "../lib/mcp";
+@source not "../lib/agent";
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
