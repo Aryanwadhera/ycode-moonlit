@@ -49,6 +49,12 @@ export interface HtmlImportOptions {
    * order. Without it the attribute is dropped with a warning.
    */
   componentMarks?: HtmlComponentMark[];
+  /**
+   * Receives every CMS / interaction annotation (`data-ycode-collection`,
+   * `data-ycode-field`, `data-ycode-link`, `data-ycode-toggle`, `data-ycode-menu`),
+   * in document order. Without it the attributes are dropped with a warning.
+   */
+  ycodeMarks?: HtmlYcodeMark[];
 }
 
 export interface HtmlComponentMark {
@@ -56,6 +62,14 @@ export interface HtmlComponentMark {
   layerId: string;
   path: string;
 }
+
+/** An element annotated with one of the `data-ycode-*` import attributes. */
+export type HtmlYcodeMark =
+  | { kind: 'collection'; layerId: string; path: string; collection: string; limit?: number; sort?: string; filter?: string }
+  | { kind: 'field'; layerId: string; path: string; field: string; target: 'auto' | 'alt' | 'background' }
+  | { kind: 'item-link'; layerId: string; path: string }
+  | { kind: 'toggle'; layerId: string; path: string; name: string }
+  | { kind: 'menu'; layerId: string; path: string; name: string };
 
 interface PendingAnchor {
   layer: Layer;
@@ -73,6 +87,7 @@ interface ImportContext {
   htmlIds: Set<string>;
   pendingAnchors: PendingAnchor[];
   componentMarks: HtmlComponentMark[] | null;
+  ycodeMarks: HtmlYcodeMark[] | null;
 }
 
 function warn(ctx: ImportContext, path: string, message: string, layerId?: string): void {
@@ -354,9 +369,12 @@ function collectInlineNodes(node: Node, marks: TiptapMark[], ctx: ImportContext,
 function warnInlineAttributes(el: Element, tag: string, ctx: ImportContext, path: string): void {
   if (!ctx.warnings) return;
   const kept = tag === 'a' ? LINK_ATTRS : [];
-  const dropped = Array.from(el.attributes)
-    .map((attr) => attr.name)
-    .filter((name) => !kept.includes(name));
+  const names = Array.from(el.attributes).map((attr) => attr.name);
+  const marks = names.filter((name) => YCODE_ATTRIBUTES.has(name));
+  if (marks.length > 0) {
+    warn(ctx, `${path} > ${tag}`, `${marks.join(', ')} on an inline <${tag}> inside running text was ignored — rich text has no per-word bindings. Put the attribute on the block element, or bind mixed text afterwards with set_dynamic_text`);
+  }
+  const dropped = names.filter((name) => !kept.includes(name) && !YCODE_ATTRIBUTES.has(name));
   if (dropped.length > 0) {
     warn(ctx, `${path} > ${tag}`, `Inline <${tag}> inside text lost its ${dropped.join(', ')} (rich text keeps only text, bold/italic/underline/strike/code/sub/sup marks, and links)`);
   }
@@ -408,7 +426,7 @@ function keepsInlineChildrenAsLayers(el: Element): boolean {
       const child = node as Element;
       if (child.tagName.toLowerCase() === 'br') continue;
       hasElementChild = true;
-      if (child.getAttribute('class')?.trim() || child.getAttribute('style')?.trim() || child.getAttribute('id')) {
+      if (child.getAttribute('class')?.trim() || child.getAttribute('style')?.trim() || child.getAttribute('id') || hasYcodeMark(child)) {
         hasStyledChild = true;
       }
     }
@@ -617,7 +635,7 @@ function warnDroppedAttributes(el: Element, tag: string, ctx: ImportContext, pat
   const imported = IMPORTED_ATTRS[tag] || [];
   const dropped = Array.from(el.attributes)
     .map((attr) => attr.name)
-    .filter((name) => name !== 'class' && name !== 'style' && name !== 'data-ref' && name !== COMPONENT_ATTRIBUTE && !imported.includes(name)
+    .filter((name) => name !== 'class' && name !== 'style' && name !== 'data-ref' && !YCODE_ATTRIBUTES.has(name) && !imported.includes(name)
       && !isAccessibilityAttribute(name)
       && !(name === 'id' && !ID_DROPPING_TAGS.has(tag)));
   if (dropped.length > 0) {
@@ -682,6 +700,61 @@ function warnRelativeSrc(el: Element, tag: string, ctx: ImportContext, path: str
 }
 
 const COMPONENT_ATTRIBUTE = 'data-ycode-component';
+const COLLECTION_ATTRIBUTE = 'data-ycode-collection';
+const FIELD_ATTRIBUTE = 'data-ycode-field';
+const FIELD_ALT_ATTRIBUTE = 'data-ycode-field-alt';
+const FIELD_BG_ATTRIBUTE = 'data-ycode-field-bg';
+const ITEM_LINK_ATTRIBUTE = 'data-ycode-link';
+const TOGGLE_ATTRIBUTE = 'data-ycode-toggle';
+const MENU_ATTRIBUTE = 'data-ycode-menu';
+const PREVIEW_ONLY_ATTRIBUTES = ['data-ycode-preview-only', 'data-preview-only'];
+
+/** Import-only annotations: consumed by the importer, never kept on the layer or reported as dropped. */
+const YCODE_ATTRIBUTES = new Set([
+  COMPONENT_ATTRIBUTE, COLLECTION_ATTRIBUTE, 'data-ycode-limit', 'data-ycode-sort', 'data-ycode-filter',
+  FIELD_ATTRIBUTE, FIELD_ALT_ATTRIBUTE, FIELD_BG_ATTRIBUTE, ITEM_LINK_ATTRIBUTE, TOGGLE_ATTRIBUTE, MENU_ATTRIBUTE,
+  ...PREVIEW_ONLY_ATTRIBUTES,
+]);
+
+/** Whether an element carries any `data-ycode-*` annotation (such elements always stay their own layer). */
+function hasYcodeMark(el: Element): boolean {
+  return Array.from(el.attributes).some((attr) => attr.name !== COMPONENT_ATTRIBUTE && YCODE_ATTRIBUTES.has(attr.name));
+}
+
+/** Pushes the element's CMS / interaction annotations onto the context, or warns when the import can't use them. */
+function readYcodeMarks(el: Element, ctx: ImportContext, path: string, layerId: string): void {
+  const marks: HtmlYcodeMark[] = [];
+  const collection = el.getAttribute(COLLECTION_ATTRIBUTE)?.trim();
+  if (collection) {
+    const limitRaw = el.getAttribute('data-ycode-limit')?.trim();
+    const limit = limitRaw ? Number.parseInt(limitRaw, 10) : NaN;
+    const sort = el.getAttribute('data-ycode-sort')?.trim();
+    const filter = el.getAttribute('data-ycode-filter')?.trim();
+    marks.push({
+      kind: 'collection', layerId, path, collection,
+      ...(Number.isFinite(limit) && limit > 0 ? { limit } : {}),
+      ...(sort ? { sort } : {}),
+      ...(filter ? { filter } : {}),
+    });
+  }
+  const field = el.getAttribute(FIELD_ATTRIBUTE)?.trim();
+  if (field) marks.push({ kind: 'field', layerId, path, field, target: 'auto' });
+  const fieldAlt = el.getAttribute(FIELD_ALT_ATTRIBUTE)?.trim();
+  if (fieldAlt) marks.push({ kind: 'field', layerId, path, field: fieldAlt, target: 'alt' });
+  const fieldBg = el.getAttribute(FIELD_BG_ATTRIBUTE)?.trim();
+  if (fieldBg) marks.push({ kind: 'field', layerId, path, field: fieldBg, target: 'background' });
+  const itemLink = el.getAttribute(ITEM_LINK_ATTRIBUTE)?.trim();
+  if (itemLink !== undefined && itemLink !== null && el.hasAttribute(ITEM_LINK_ATTRIBUTE)) {
+    if (!itemLink || itemLink === 'item') marks.push({ kind: 'item-link', layerId, path });
+    else warn(ctx, path, `${ITEM_LINK_ATTRIBUTE}="${itemLink}" is not supported; use ${ITEM_LINK_ATTRIBUTE}="item"`, layerId);
+  }
+  if (el.hasAttribute(TOGGLE_ATTRIBUTE)) marks.push({ kind: 'toggle', layerId, path, name: el.getAttribute(TOGGLE_ATTRIBUTE)?.trim() || 'menu' });
+  if (el.hasAttribute(MENU_ATTRIBUTE)) marks.push({ kind: 'menu', layerId, path, name: el.getAttribute(MENU_ATTRIBUTE)?.trim() || 'menu' });
+
+  if (marks.length === 0) return;
+  if (ctx.ycodeMarks) ctx.ycodeMarks.push(...marks);
+  else warn(ctx, path, 'data-ycode-* annotations are only supported by the MCP import and were ignored', layerId);
+}
 
 /** Landmark tags that get a ref even without an id: first <header> → "header", second → "header[2]". */
 const TAG_REF_TAGS = new Set(['header', 'footer', 'nav', 'main', 'aside', 'section']);
@@ -730,6 +803,9 @@ function elementToLayer(el: Element, ctx: ImportContext, path: string): Layer | 
     return null;
   }
 
+  // Static preview copies next to a data-ycode-collection item are design-time only.
+  if (ctx.ycodeMarks && PREVIEW_ONLY_ATTRIBUTES.some((attr) => el.hasAttribute(attr))) return null;
+
   const layerId = generateId('lyr');
   // A <label> wrapping its control is a container, which the editor models as a
   // div with the label tag (same shape as the native form templates).
@@ -746,6 +822,7 @@ function elementToLayer(el: Element, ctx: ImportContext, path: string): Layer | 
     if (ctx.componentMarks) ctx.componentMarks.push({ name: componentName, layerId, path });
     else warn(ctx, path, `${COMPONENT_ATTRIBUTE} is only supported by the MCP import and was ignored`, layerId);
   }
+  readYcodeMarks(el, ctx, path, layerId);
 
   const rawDesign = classes ? classesToDesign(classes) : undefined;
   const design = cleanDesign(rawDesign);
@@ -1021,6 +1098,7 @@ export function documentToLayers(doc: Document, options: HtmlImportOptions = {})
     htmlIds: new Set(),
     pendingAnchors: [],
     componentMarks: options.componentMarks ?? null,
+    ycodeMarks: options.ycodeMarks ?? null,
   };
 
   // Parsers hoist <style>, <link>, <title>, etc. into <head>, out of the body walk

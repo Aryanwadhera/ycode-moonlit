@@ -46,6 +46,19 @@ function cloneWithFreshIds(layer: Layer, idMap: Map<string, string>): Layer {
   };
 }
 
+/** Interaction tweens target layers by id, so they follow the layers into the master. */
+function remapInteractionTargets(layer: Layer, idMap: Map<string, string>): Layer {
+  const interactions = layer.interactions?.map((interaction) => ({
+    ...interaction,
+    tweens: interaction.tweens.map((tween) => ({ ...tween, layer_id: idMap.get(tween.layer_id) ?? tween.layer_id })),
+  }));
+  return {
+    ...layer,
+    ...(interactions ? { interactions } : {}),
+    ...(layer.children ? { children: layer.children.map((child) => remapInteractionTargets(child, idMap)) } : {}),
+  };
+}
+
 /**
  * Each mark waits for the marks inside it (so they're already instances in its
  * master) and, for a repeated name, for that name's first occurrence (which
@@ -134,7 +147,8 @@ export async function extractMarkedComponents(
     }
 
     const idMap = new Map<string, string>();
-    const master = { ...cloneWithFreshIds(JSON.parse(JSON.stringify(layer)) as Layer, idMap), customName: mark.name };
+    const cloned = cloneWithFreshIds(JSON.parse(JSON.stringify(layer)) as Layer, idMap);
+    const master = { ...remapInteractionTargets(cloned, idMap), customName: mark.name };
     const componentId = await createComponent(mark.name, [master]);
     byName.set(key, componentId);
     createdNames.set(key, mark.name);

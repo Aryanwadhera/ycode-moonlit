@@ -6,9 +6,14 @@ import { lintDesign } from '@/lib/mcp/design-lint';
 import { collectFontFamiliesFromDesign, ensureFontsInstalled, fontWarnings } from '@/lib/mcp/font-install';
 import { extractMarkedComponents } from '@/lib/mcp/html-import-components';
 import type { ImportedComponent } from '@/lib/mcp/html-import-components';
+import { applyCmsMarks, applyToggleMarks } from '@/lib/mcp/html-import-marks';
+import type { ImportedCollectionList, ImportedToggle } from '@/lib/mcp/html-import-marks';
 import { getCachedLayers, saveCachedLayers } from '@/lib/mcp/page-layers';
 import { canHaveChildren, findLayerById, generateId, insertLayer, removeLayer } from '@/lib/mcp/utils';
+import { getFieldsByCollectionId } from '@/lib/repositories/collectionFieldRepository';
+import { getAllCollections } from '@/lib/repositories/collectionRepository';
 import { createComponent, getAllComponents, getComponentById, updateComponent } from '@/lib/repositories/componentRepository';
+import { getAllPages, getPageById } from '@/lib/repositories/pageRepository';
 import { htmlToLayersOnServer } from '@/lib/server/html-to-layers';
 import type { HtmlImportWarning } from '@/lib/html-layer-converter';
 import type { ComponentVariant, Layer } from '@/types';
@@ -152,13 +157,30 @@ master layers; edit them with update_component_layers. A name that matches an ex
 repeats within the HTML, becomes another instance of it (its own markup is discarded), so mark one
 copy and give per-instance content through component variables afterwards.
 
+MOBILE MENU: data-ycode-toggle="menu" on the menu button plus data-ycode-menu="menu" on the panel
+creates the native click interaction (yoyo, display hidden→visible, applied on load) that shows and
+hides the panel — the same pattern as the navigation-001 layout. The breakpoints come from the
+markup: a panel with "max-lg:hidden" (or "hidden lg:flex") toggles on tablet + mobile, "max-md:hidden"
+on mobile only, no hidden class at all on every breakpoint. Never write <script> toggles.
+
+CMS (page imports only): mark the ONE repeated item with data-ycode-collection="Collection name or
+id" — that element becomes the Collection List, cloned once per item, so keep the grid/flex layout on
+its parent. Optional data-ycode-limit="6", data-ycode-sort="Field:desc" (or manual/random) and
+data-ycode-filter="Field=value; Other!=value". Inside it, data-ycode-field="Field name" on a text,
+heading, image, video, or link element binds that field (image alt: data-ycode-field-alt, background
+image: data-ycode-field-bg), and data-ycode-link="item" on a card or button links to the
+collection's dynamic page. Mark the other static copies with data-ycode-preview-only so they are
+dropped. On a dynamic page, data-ycode-field outside any collection binds the page's own item.
+The collection must already exist (create_collection + add_collection_field first); unresolved
+names or fields are reported and left static. Results are returned in "cms".
+
 ITERATING: pass replace_layer_id to swap an existing layer (e.g. a section you imported earlier) for
 the new HTML in one atomic step, at the same position. Pass dry_run: true to get the layer count and
 warnings without changing anything. Import large pages section by section.
 
 Returns the ids of the created top-level layers plus warnings for anything dropped or converted
 lossily (attributes, unknown tags, relative media, classes without a design-panel control). Fix
-those with the layer tools. CMS bindings, component variables, animations, and form settings are not
+those with the layer tools. Component variables, other animations, and form settings are not
 expressible in HTML; add them afterwards with their tools.`,
     {
       page_id: z.string().optional().describe('Page to import into. Provide page_id or component_id.'),
@@ -232,9 +254,26 @@ expressible in HTML; add them afterwards with their tools.`,
       const converted = htmlToLayersOnServer(html, {
         anchorIds: collectHtmlIds(baseTree),
       });
-      const { warnings, componentMarks } = converted;
+      const { warnings, componentMarks, ycodeMarks } = converted;
       if (converted.layers.length === 0) {
         return errorResult('The HTML produced no layers. Check that it contains elements inside <body> (or is a plain fragment).');
+      }
+
+      const cmsMarks = ycodeMarks.filter((m) => m.kind === 'collection' || m.kind === 'field' || m.kind === 'item-link');
+      if (cmsMarks.length > 0 && !page_id) {
+        for (const mark of cmsMarks) {
+          warnings.push({ message: 'data-ycode-collection / -field / -link only work when importing into a page; ignored', path: mark.path, layerId: mark.layerId });
+        }
+      }
+
+      // Menu toggles are pure layer data, so they apply before component extraction
+      // (the interaction then lives inside the navbar component's master).
+      let toggles: ImportedToggle[] = [];
+      if (ycodeMarks.some((m) => m.kind === 'toggle' || m.kind === 'menu')) {
+        const toggled = applyToggleMarks(converted.layers, ycodeMarks);
+        converted.layers = toggled.layers;
+        toggles = toggled.toggles;
+        warnings.push(...toggled.warnings);
       }
 
       if (componentMarks.length > 0 && !page_id) {
@@ -262,6 +301,8 @@ expressible in HTML; add them afterwards with their tools.`,
               message: `Dry run: would import ${topLevelCount} top-level layer(s) (${total} total) into ${target}${replace_layer_id ? `, replacing ${replace_layer_id}` : ''}. Nothing was saved.`,
               ref_names: refKeys.length > 0 ? refKeys : undefined,
               component_names: componentNames.length > 0 ? componentNames : undefined,
+              menu_toggles: toggles.length > 0 ? toggles.length : undefined,
+              cms_marks: page_id && cmsMarks.length > 0 ? cmsMarks.length : undefined,
               warning_count: warnings.length,
               warnings: groups.length > 0 ? groups : undefined,
               warnings_omitted: omitted > 0 ? omitted : undefined,
@@ -290,8 +331,23 @@ expressible in HTML; add them afterwards with their tools.`,
         warnings.push(...extraction.warnings);
       }
 
-      const updated = insertLayers(baseTree, parentId, imported, insertAt);
+      let updated = insertLayers(baseTree, parentId, imported, insertAt);
       if (typeof updated === 'string') return errorResult(updated);
+
+      let cms: { collection_lists: ImportedCollectionList[]; fields_bound: number; item_links: number } | undefined;
+      if (page_id && cmsMarks.length > 0) {
+        const page = await getPageById(page_id);
+        const applied = await applyCmsMarks(updated, cmsMarks, {
+          getCollections: () => getAllCollections({ deleted: false }),
+          getFields: (collectionId) => getFieldsByCollectionId(collectionId),
+          getPages: () => getAllPages({ is_published: false }),
+          pageCollectionId: page?.is_dynamic ? page.settings?.cms?.collection_id : undefined,
+        });
+        updated = applied.layers;
+        warnings.push(...applied.warnings);
+        cms = { collection_lists: applied.collection_lists, fields_bound: applied.fields_bound, item_links: applied.item_links };
+      }
+
       await saveTree(updated);
 
       const { groups, omitted } = groupWarnings(warnings);
@@ -310,6 +366,8 @@ expressible in HTML; add them afterwards with their tools.`,
             parent_layer_id: parentId ?? null,
             refs: refKeys.length > 0 ? refs : undefined,
             components: Object.keys(components).length > 0 ? components : undefined,
+            menu_toggles: toggles.length > 0 ? toggles : undefined,
+            cms,
             warning_count: warnings.length,
             warnings: groups.length > 0 ? groups : undefined,
             warnings_omitted: omitted > 0 ? omitted : undefined,

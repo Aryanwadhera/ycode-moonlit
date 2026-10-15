@@ -242,7 +242,9 @@ touches more than one layer, use the op inside one batch instead of the single t
   HTML + Tailwind into native layers in one call. Default to add_layout and the layer tools otherwise.
   Import section by section, target layers through the returned refs (id / data-ref / tag), and redo a
   section with replace_layer_id instead of deleting and re-importing. Mark repeated blocks (navbar,
-  card, footer) with data-ycode-component="Name" to import them as components.
+  card, footer) with data-ycode-component="Name" to import them as components. Annotate the markup
+  so the import wires behavior too: data-ycode-toggle / data-ycode-menu for the mobile menu,
+  data-ycode-collection + data-ycode-field + data-ycode-link="item" for CMS lists (see import_html).
 
 ### Animations & Interactions
 
@@ -271,6 +273,8 @@ breakpoints ["tablet", "mobile"], one tween targeting the menu panel animating d
 a custom <script>, htmlEmbed or CSS toggle — it is not editable in Ycode. Give the button an
 aria-label (update_layer_settings custom_attributes). Interactions work inside component
 masters too: pass component_id instead of page_id to add_animation / set_layer_interactions.
+When importing HTML, data-ycode-toggle="menu" on the button and data-ycode-menu="menu" on the
+panel create this interaction automatically.
 
 ### Components (Reusable Elements)
 
@@ -694,6 +698,9 @@ repeated card; its parent div is the list container that holds the grid/gap):
 0. **Structure**: parent div (display grid / flex, gridTemplateColumns, gap) → collection
    layer (card: padding, background, border, radius) → bound children. A grid on the
    collection layer itself renders one grid per item — batch_operations warns about this.
+   With import_html, put data-ycode-collection="Name" on the ONE card, data-ycode-field on its
+   bound children, data-ycode-link="item" on the card, and data-ycode-preview-only on the
+   static copies — steps 1, 3 and 4 then happen in the import.
 1. **Bind** the list with bind_collection_layer (collection, sorting, limit, pagination;
    also nested lists sourced from a reference field, and visitor-controlled sort inputs).
 2. **Filter** which items render with set_collection_filters (groups AND'd, conditions
