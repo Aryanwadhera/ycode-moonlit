@@ -5,6 +5,59 @@
  * Used by both client-side rendering (text-format-utils) and server-side (page-fetcher)
  */
 
+import type { JSONContent } from '@tiptap/core';
+import type { Schema } from '@tiptap/pm/model';
+
+/**
+ * Rename legacy `image` nodes to `richTextImage` so migrated docs render in the
+ * editor. The new schema only registers `richTextImage`; unknown node types are
+ * silently dropped on load.
+ */
+export function normalizeLegacyTiptapDoc<T>(doc: T): T {
+  if (!doc || typeof doc !== 'object') return doc;
+  const node = doc as any;
+  if (node.type === 'image') {
+    node.type = 'richTextImage';
+  }
+  if (Array.isArray(node.content)) {
+    node.content.forEach((child: any) => normalizeLegacyTiptapDoc(child));
+  }
+  return doc;
+}
+
+/**
+ * Parse a stored rich-text value (Tiptap JSON object, stringified JSON or
+ * legacy plain text) into a Tiptap doc.
+ */
+export function parseRichTextDoc(value: unknown): JSONContent {
+  if (typeof value === 'object' && value !== null) {
+    return normalizeLegacyTiptapDoc(value as JSONContent);
+  }
+  if (typeof value === 'string' && value.startsWith('{')) {
+    try {
+      return normalizeLegacyTiptapDoc(JSON.parse(value));
+    } catch {
+      // Not valid JSON, treat as plain text
+    }
+  }
+  if (typeof value === 'string' && value.trim()) {
+    return { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: value }] }] };
+  }
+  return { type: 'doc', content: [{ type: 'paragraph' }] };
+}
+
+/**
+ * Serialize a doc the way the editor's `getJSON()` does (schema default attrs
+ * filled in), so an unchanged stored value doesn't compare as an edit.
+ */
+export function toEditorJSON(schema: Schema, doc: JSONContent): JSONContent {
+  try {
+    return schema.nodeFromJSON(doc).toJSON();
+  } catch {
+    return doc;
+  }
+}
+
 /**
  * Extract inline nodes from nested Tiptap rich text content
  * Flattens paragraphs and preserves marks for inline rendering
