@@ -2,6 +2,7 @@ import { getSupabaseAdmin } from '@/lib/supabase-server';
 import type { PageLayers, Layer } from '../../types';
 import { generatePageLayersHash } from '../hash-utils';
 import { deleteTranslationsInBulk, markTranslationsIncomplete } from '@/lib/repositories/translationRepository';
+import { isValidUUID } from '@/lib/utils';
 import { extractLayerContentMap } from '../localisation-utils';
 
 /**
@@ -664,8 +665,36 @@ async function findComponentsEmbeddingCollections(
 }
 
 /**
+ * Find reference fields (in any collection) that point at the given collections.
+ * Bindings to referenced data store the reference field's ID in their
+ * `field_id`/`relationships` path, never the referenced collection's ID.
+ */
+async function findReferenceFieldIds(
+  client: NonNullable<Awaited<ReturnType<typeof getSupabaseAdmin>>>,
+  collectionIds: string[],
+): Promise<string[]> {
+  // `reference_collection_id` is a uuid column: one virtual id (e.g. the
+  // multi-asset sentinel) would make Postgres reject the whole IN list
+  const safeCollectionIds = collectionIds.filter(isValidUUID);
+  if (safeCollectionIds.length === 0) return [];
+
+  const { data, error } = await client
+    .from('collection_fields')
+    .select('id')
+    .in('reference_collection_id', safeCollectionIds)
+    .in('type', ['reference', 'multi_reference'])
+    .eq('is_published', false)
+    .is('deleted_at', null);
+
+  if (error) throw new Error(`Failed to fetch reference fields: ${error.message}`);
+  return (data || []).map(field => field.id as string);
+}
+
+/**
  * Find pages affected by changed components, layer styles, and collections
  * in a single pass over draft page_layers (and pages.settings for collections).
+ * Collection matches include pages rendering a changed collection's items
+ * through a reference field of another collection.
  *
  * Searches via JSON.stringify in JS rather than PostgreSQL `::text` cast
  * through the Supabase client (which URL-encodes `::` and breaks PostgREST).
@@ -701,15 +730,23 @@ export async function findAffectedPages(
   const allComponentIds = [...new Set([...componentIds, ...expandedComponentIds])];
   const hasExpandedComponents = allComponentIds.length > 0;
 
+  // Referenced items render through another collection's reference field
+  // (e.g. a blog post showing its author's name), so a changed collection is
+  // also matched by the IDs of the fields that reference it.
+  const referenceFieldIds = hasCollections
+    ? await findReferenceFieldIds(client, collectionIds)
+    : [];
+  const collectionSearchIds = [...collectionIds, ...referenceFieldIds];
+
   // A collection can be rendered through a reusable component (the binding
   // lives in the component, not the page using it). Find those components so
   // pages embedding them are invalidated on CMS publish. Treated as collection
   // matches — a page is collection-affected if its layers reference a changed
   // collection ID directly OR a component that embeds one.
   const collectionEmbeddingComponentIds = hasCollections
-    ? await findComponentsEmbeddingCollections(client, collectionIds)
+    ? await findComponentsEmbeddingCollections(client, collectionSearchIds)
     : [];
-  const collectionMatchIds = new Set([...collectionIds, ...collectionEmbeddingComponentIds]);
+  const collectionMatchIds = new Set([...collectionSearchIds, ...collectionEmbeddingComponentIds]);
 
   // Single scan of all draft page_layers
   const { data: allLayers } = await client
@@ -764,7 +801,7 @@ export async function findAffectedPages(
       for (const page of allPages) {
         if (!page.settings || collectionPageSet.has(page.id)) continue;
         const text = JSON.stringify(page.settings);
-        for (const id of collectionIds) {
+        for (const id of collectionSearchIds) {
           if (text.includes(id)) { collectionPageSet.add(page.id); break; }
         }
       }
