@@ -719,7 +719,9 @@ repeated card; its parent div is the list container that holds the grid/gap):
    ONE batch_operations call. For multi-field text in one node ("$" + price + " / mo") use
    set_dynamic_text.
 4. **Link a card to the item's page:** update_layer_link with link_type "page",
-   page_id_target = the dynamic page, and NO collection_item_id — it resolves per item.
+   page_id_target = the dynamic page, and collection_item_id "current-collection" (filled in
+   for you when the layer sits inside a list of that collection). A dynamic-page link with
+   no item renders the literal "/blog/{slug}".
 
 Show/hide ANY layer conditionally (sale badges, empty states) with set_layer_visibility —
 same condition model as set_collection_filters.

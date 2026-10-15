@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { Layer, Breakpoint, UIState } from '@/types';
+import type { Layer, Breakpoint, UIState, Page } from '@/types';
 import {
   findLayerById,
   updateLayerById,
@@ -17,6 +17,7 @@ import {
   applyBackgroundImage,
   applyLayerSettings,
   buildLinkSettings,
+  defaultDynamicPageItem,
   describeLink,
   resolveLinkAnchor,
 } from '@/lib/mcp/utils';
@@ -25,6 +26,7 @@ import { getCachedLayers, saveCachedLayers } from '@/lib/mcp/page-layers';
 import { bindLayerToField } from '@/lib/mcp/field-binding';
 import type { FieldCache } from '@/lib/mcp/field-binding';
 import { getCollectionById } from '@/lib/repositories/collectionRepository';
+import { getPageById } from '@/lib/repositories/pageRepository';
 import { canConvertToCollection } from '@/lib/layer-utils';
 import { broadcastLayersChanged } from '@/lib/mcp/broadcast';
 import { lintDesign } from '@/lib/mcp/design-lint';
@@ -174,6 +176,11 @@ EXAMPLE:
     },
     async ({ page_id, operations }) => {
       let layers = await getCachedLayers(page_id);
+      const pageCache = new Map<string, Promise<Page | null>>();
+      const getCachedPage = (id: string) => {
+        if (!pageCache.has(id)) pageCache.set(id, getPageById(id).catch(() => null));
+        return pageCache.get(id)!;
+      };
 
       // Reveal the page section-by-section as it's built. Each time the agent
       // starts a new top-level section, we broadcast the current tree (a live
@@ -294,9 +301,14 @@ EXAMPLE:
                 linksElsewhere && op.anchor_layer_id ? await getCachedLayers(op.page_id_target!) : layers,
               );
               if ('error' in resolvedLink) { results.push({ op: i, status: 'error', detail: resolvedLink.error }); continue; }
+              let linkInput = resolvedLink.input;
+              if (linkInput.link_type === 'page' && linkInput.page_id_target && !linkInput.collection_item_id) {
+                const [targetPage, currentPage] = await Promise.all([getCachedPage(linkInput.page_id_target), getCachedPage(page_id)]);
+                linkInput = defaultDynamicPageItem(linkInput, layers, layerId, targetPage, currentPage);
+              }
               layers = updateLayerById(layers, layerId, (l) => ({
                 ...l,
-                variables: { ...l.variables, link: buildLinkSettings(resolvedLink.input, l.variables?.link) },
+                variables: { ...l.variables, link: buildLinkSettings(linkInput, l.variables?.link) },
               }));
               results.push({ op: i, status: 'ok', detail: `${describeLink(op)} on "${layer.customName || layer.name}"` });
               break;

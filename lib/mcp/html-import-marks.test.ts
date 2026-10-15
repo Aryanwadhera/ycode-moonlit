@@ -123,7 +123,7 @@ test('collection marks bind the repeated item, its fields and the item link', as
   assert.equal(card.variables!.collection!.filters!.groups.length, 1);
   assert.equal(card.variables!.collection!.filters!.groups[0].conditions[0].fieldId, 'f_featured');
   assert.equal(card.variables!.collection!.filters!.groups[0].conditions[0].operator, 'is');
-  assert.deepEqual(card.variables!.link, { type: 'page', page: { id: 'page_dyn' } });
+  assert.deepEqual(card.variables!.link, { type: 'page', page: { id: 'page_dyn', collection_item_id: 'current-collection' } });
 
   const title = findLayerById(result.layers, converted.refs.title)!;
   const titleDoc = title.variables!.text!.data.content as { content: { content: { type: string; attrs?: { variable: { data: { field_id: string; collection_layer_id: string } } } }[] }[] };

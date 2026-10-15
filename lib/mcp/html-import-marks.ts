@@ -15,6 +15,7 @@ import { applyFieldBinding, buildFieldData } from '@/lib/mcp/field-binding-core'
 import { buildConditionGroups } from '@/lib/mcp/tools/visibility-conditions';
 import { findLayerById, generateId, updateLayerById } from '@/lib/mcp/utils';
 import { canConvertToCollection, canLayerHaveLink, findParentCollectionLayer } from '@/lib/layer-utils';
+import { COLLECTION_ITEM_KEYWORDS } from '@/lib/link-utils';
 import type { HtmlImportWarning, HtmlYcodeMark } from '@/lib/html-layer-converter';
 import type { Breakpoint, Collection, CollectionField, CollectionVariable, Layer, LayerInteraction, Page } from '@/types';
 
@@ -334,7 +335,7 @@ export async function applyCmsMarks(layers: Layer[], marks: HtmlYcodeMark[], dep
       }
       const page = pages.find((p) => p.is_dynamic && p.settings?.cms?.collection_id === ctx.collectionId);
       if (!page) {
-        warn(mark, 'data-ycode-link="item": the collection has no dynamic page yet. Create one (create_page + update_page_settings cms), then link this layer with update_layer_link (link_type "page", no collection_item_id)');
+        warn(mark, 'data-ycode-link="item": the collection has no dynamic page yet. Create one (create_page + update_page_settings cms), then link this layer with update_layer_link (link_type "page", collection_item_id "current-collection")');
         continue;
       }
       tree = updateLayerById(tree, layer.id, (l) => {
@@ -345,7 +346,7 @@ export async function applyCmsMarks(layers: Layer[], marks: HtmlYcodeMark[], dep
             ...l.variables,
             link: {
               type: 'page',
-              page: { id: page.id },
+              page: { id: page.id, collection_item_id: COLLECTION_ITEM_KEYWORDS.CURRENT_COLLECTION },
               ...(existing?.target ? { target: existing.target } : {}),
               ...(existing?.rel ? { rel: existing.rel } : {}),
             },

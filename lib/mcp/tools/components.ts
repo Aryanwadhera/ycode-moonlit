@@ -23,6 +23,7 @@ import {
   describeImageUpdate,
   applyLayerSettings,
   buildLinkSettings,
+  defaultDynamicPageItem,
   describeLink,
   generateId,
 } from '@/lib/mcp/utils';
@@ -38,7 +39,7 @@ import { EMPTY_OVERRIDES, createTextComponentVariableValue } from '@/lib/variabl
 import { stringToTiptapContent } from '@/lib/text-format-utils';
 import { collectFontFamiliesFromDesign, ensureFontsInstalled, fontWarnings } from '@/lib/mcp/font-install';
 import { getCachedLayers as getPageLayers, saveCachedLayers } from '@/lib/mcp/page-layers';
-import { getAllPages } from '@/lib/repositories/pageRepository';
+import { getAllPages, getPageById } from '@/lib/repositories/pageRepository';
 import { getAllDraftLayers } from '@/lib/repositories/pageLayersRepository';
 import { hasLayerQuery, queryLayers } from '@/lib/mcp/layer-query';
 import {
@@ -1163,10 +1164,15 @@ Pass variant_id to target a specific named variant; omit it to update the primar
               const layerId = refMap.get(op.layer_id) || op.layer_id;
               const layer = findLayerById(layers, layerId);
               if (!layer) { results.push({ op: i, status: 'error', detail: `Layer "${op.layer_id}" not found` }); continue; }
+              let linkInput = op;
+              if (op.link_type === 'page' && op.page_id_target && !op.collection_item_id) {
+                const targetPage = await getPageById(op.page_id_target).catch(() => null);
+                linkInput = defaultDynamicPageItem(op, layers, layerId, targetPage);
+              }
               // buildLinkSettings keeps a linked component variable (variable_id) on the link.
               layers = updateLayerById(layers, layerId, (l) => ({
                 ...l,
-                variables: { ...l.variables, link: buildLinkSettings(op, l.variables?.link) },
+                variables: { ...l.variables, link: buildLinkSettings(linkInput, l.variables?.link) },
               }));
               results.push({ op: i, status: 'ok', detail: `${describeLink(op)} on "${layer.customName || layer.name}"` });
               break;
