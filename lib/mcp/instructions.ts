@@ -211,6 +211,12 @@ add_layer({ template: "richText", rich_content: [
 **Updating rich text content:**
 Use \`set_rich_text_content\` or the batch \`set_rich_text\` operation.
 
+**Styling the elements inside rich text** (every h2 / paragraph / list / blockquote / link /
+image rendered by the layer, including CMS rich_text fields bound to it): use
+\`update_rich_text_styles\` with per-element designs (keys h1–h6, paragraph, link, bulletList,
+orderedList, listItem, blockquote, code, richTextImage, table…; hover via hover_styles). Set
+these on every long-form / CMS rich text layer — never fix unstyled CMS content with custom CSS.
+
 **Supported block types:** paragraph, heading (level 1-6), blockquote, bulletList, orderedList, codeBlock, horizontalRule, htmlEmbed, image, table, component
 **Inline formatting:** \`**bold**\`, \`*italic*\`, \`[link text](url)\`
 
@@ -715,6 +721,11 @@ repeated card; its parent div is the list container that holds the grid/gap):
 
 Show/hide ANY layer conditionally (sale badges, empty states) with set_layer_visibility —
 same condition model as set_collection_filters.
+
+**Dynamic pages:** \`create_collection_pages\` scaffolds the folder, the index (listing) page and
+the dynamic detail page bound to the collection's slug field with per-item SEO title /
+description in one call — use it instead of create_page_folder + create_page + update_page_settings.
+Then build the listing on the index page and bind detail-page fields with source "page".
 
 **Dynamic-page SEO vs custom code (different binding syntaxes):**
 - SEO title/description: bind fields with \`<ycode-inline-variable>\` tags (same as set_dynamic_text).

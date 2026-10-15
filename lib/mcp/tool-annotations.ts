@@ -65,6 +65,7 @@ export const TOOL_META: Record<string, ToolMeta> = {
   get_layers: read('Get page layers'),
   add_layer: write('Add layer'),
   update_layer_design: write('Update layer design'),
+  update_rich_text_styles: write('Update rich text element styles'),
   update_layer_text: write('Update layer text'),
   set_rich_text_content: write('Set rich text content'),
   delete_layer: destructive('Delete layer'),
@@ -106,6 +107,7 @@ export const TOOL_META: Record<string, ToolMeta> = {
   // Collection layers
   bind_collection_layer: write('Bind collection list'),
   set_collection_filters: write('Set collection filters'),
+  create_collection_pages: write('Create collection pages'),
   bind_layer_field: write('Bind layer to field'),
   set_dynamic_text: write('Set dynamic text'),
   set_layer_visibility: write('Set layer visibility'),

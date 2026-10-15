@@ -29,6 +29,8 @@ import { registerSettingsTools } from '@/lib/mcp/tools/settings';
 import { registerPublishingTools } from '@/lib/mcp/tools/publishing';
 import { registerAnimationTools } from '@/lib/mcp/tools/animations';
 import { registerHtmlImportTools } from '@/lib/mcp/tools/html-import';
+import { registerRichTextStyleTools } from '@/lib/mcp/tools/rich-text-styles';
+import { registerCollectionPageTools } from '@/lib/mcp/tools/collection-pages';
 import { registerReferenceResources } from '@/lib/mcp/resources/reference';
 import { registerSiteResources } from '@/lib/mcp/resources/site';
 
@@ -88,6 +90,8 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
   registerPublishingTools(server);
   registerAnimationTools(server);
   registerHtmlImportTools(server);
+  registerRichTextStyleTools(server);
+  registerCollectionPageTools(server);
 
   registerReferenceResources(server);
   registerSiteResources(server);
