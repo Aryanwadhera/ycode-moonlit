@@ -1,21 +1,27 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { resolveCrossPageAnchors } from './html-import-anchors';
-import type { AnchorPageSource } from './html-import-anchors';
-import { parseAnchorHref } from '../html-layer-converter';
+import { resolveCrossPageLinks } from './html-import-links';
+import type { LinkPageSource } from './html-import-links';
+import { parseSiteHref } from '../html-layer-converter';
 import { htmlToLayersOnServer } from '../server/html-to-layers';
 import type { Layer } from '../../types';
 
-test('parseAnchorHref recognises same-page and site-path anchors only', () => {
-  assert.deepEqual(parseAnchorHref('#features'), { anchorId: 'features' });
-  assert.deepEqual(parseAnchorHref('/#features'), { anchorId: 'features', pagePath: '/' });
-  assert.deepEqual(parseAnchorHref('/pricing#plans'), { anchorId: 'plans', pagePath: '/pricing' });
-  assert.deepEqual(parseAnchorHref('/pricing/#plans'), { anchorId: 'plans', pagePath: '/pricing' });
-  assert.equal(parseAnchorHref('#'), null);
-  assert.equal(parseAnchorHref('/pricing'), null);
-  assert.equal(parseAnchorHref('https://example.com/#top'), null);
-  assert.equal(parseAnchorHref('//cdn.example.com/x#y'), null);
+test('parseSiteHref recognises site paths and anchors only', () => {
+  assert.deepEqual(parseSiteHref('#features'), { anchorId: 'features' });
+  assert.deepEqual(parseSiteHref('/#features'), { anchorId: 'features', pagePath: '/' });
+  assert.deepEqual(parseSiteHref('/pricing#plans'), { anchorId: 'plans', pagePath: '/pricing' });
+  assert.deepEqual(parseSiteHref('/pricing/#plans'), { anchorId: 'plans', pagePath: '/pricing' });
+  assert.deepEqual(parseSiteHref('/'), { pagePath: '/' });
+  assert.deepEqual(parseSiteHref('/pricing'), { pagePath: '/pricing' });
+  assert.deepEqual(parseSiteHref('/blog/post/'), { pagePath: '/blog/post' });
+  assert.equal(parseSiteHref('#'), null);
+  assert.equal(parseSiteHref('/pricing#'), null);
+  assert.equal(parseSiteHref('/pricing?plan=pro'), null);
+  assert.equal(parseSiteHref('/sitemap.xml'), null);
+  assert.equal(parseSiteHref('https://example.com/#top'), null);
+  assert.equal(parseSiteHref('//cdn.example.com/x#y'), null);
+  assert.equal(parseSiteHref('mailto:hi@example.com'), null);
 });
 
 test('the importer resolves local anchors itself and hands the rest over', () => {
@@ -25,6 +31,7 @@ test('the importer resolves local anchors itself and hands the rest over', () =>
       <a href="#pricing" class="p-2">Pricing</a>
       <a href="/#top" class="p-2">Home</a>
       <a href="/pricing#plans" class="p-2">Plans</a>
+      <a href="/about" class="p-2">About</a>
       <a href="https://x.y/#z" class="p-2">Out</a>
     </nav>
     <section id="features"></section>`, { anchorIds: ['already-on-page'] });
@@ -35,11 +42,12 @@ test('the importer resolves local anchors itself and hands the rest over', () =>
   assert.equal(features.variables?.link?.url, undefined);
 
   assert.deepEqual(
-    result.unresolvedAnchors.map(({ anchorId, pagePath }) => ({ anchorId, pagePath })),
+    result.unresolvedLinks.map(({ anchorId, pagePath }) => ({ anchorId, pagePath })),
     [
       { anchorId: 'pricing', pagePath: undefined },
       { anchorId: 'top', pagePath: '/' },
       { anchorId: 'plans', pagePath: '/pricing' },
+      { anchorId: undefined, pagePath: '/about' },
     ],
   );
   // Nothing is reported yet: the caller decides after looking at the other pages.
@@ -53,7 +61,7 @@ const link = (id: string, href: string): Layer => ({
   variables: { link: { type: 'url', url: { type: 'dynamic_text', data: { content: href } }, target: '_self' } },
 });
 
-const pages: AnchorPageSource[] = [
+const pages: LinkPageSource[] = [
   { id: 'home', path: '/', isHomepage: true, htmlIds: new Set(['features', 'top']) },
   { id: 'pricing', path: '/pricing', isHomepage: false, htmlIds: new Set(['plans', 'features']) },
   { id: 'about', path: '/about', isHomepage: false, htmlIds: new Set() },
@@ -61,7 +69,7 @@ const pages: AnchorPageSource[] = [
 
 test('a bare #id becomes a page + anchor link to the page holding it, preferring the homepage', () => {
   const layers = [link('a', '#features'), link('b', '#plans'), link('c', '#nowhere')];
-  const result = resolveCrossPageAnchors(layers, [
+  const result = resolveCrossPageLinks(layers, [
     { layerId: 'a', anchorId: 'features', path: 'a' },
     { layerId: 'b', anchorId: 'plans', path: 'b' },
     { layerId: 'c', anchorId: 'nowhere', path: 'c' },
@@ -81,7 +89,7 @@ test('a bare #id becomes a page + anchor link to the page holding it, preferring
 
 test('a /path#id href links to that page even when the id is not there yet', () => {
   const layers = [link('a', '/pricing#plans'), link('b', '/about#team'), link('c', '/missing#x'), link('d', '/#hero')];
-  const result = resolveCrossPageAnchors(layers, [
+  const result = resolveCrossPageLinks(layers, [
     { layerId: 'a', anchorId: 'plans', path: 'a', pagePath: '/pricing' },
     { layerId: 'b', anchorId: 'team', path: 'b', pagePath: '/about' },
     { layerId: 'c', anchorId: 'x', path: 'c', pagePath: '/missing' },
@@ -98,4 +106,22 @@ test('a /path#id href links to that page even when the id is not there yet', () 
   assert.equal(messages.length, 2, messages.join('\n'));
   assert.match(messages[0], /nothing there has id "team" yet/);
   assert.match(messages[1], /"\/missing#x" points at a page that doesn't exist/);
+});
+
+test('a plain /path href becomes a page link; unknown paths stay URLs with a hint', () => {
+  const layers = [link('a', '/pricing'), link('b', '/'), link('c', '/blog/hello-world')];
+  const result = resolveCrossPageLinks(layers, [
+    { layerId: 'a', path: 'a', pagePath: '/pricing' },
+    { layerId: 'b', path: 'b', pagePath: '/' },
+    { layerId: 'c', path: 'c', pagePath: '/blog/hello-world' },
+  ], { pages, currentPageId: 'about', localIds: new Set() });
+
+  assert.deepEqual(layers[0].variables?.link, { type: 'page', page: { id: 'pricing' }, target: '_self' });
+  assert.deepEqual(layers[1].variables?.link, { type: 'page', page: { id: 'home' }, target: '_self' });
+  assert.equal(layers[2].variables?.link?.url?.data.content, '/blog/hello-world');
+
+  assert.deepEqual(result.resolved, [{ layerId: 'a', pageId: 'pricing' }, { layerId: 'b', pageId: 'home' }]);
+  assert.equal(result.warnings.length, 1);
+  assert.equal(result.warnings[0].severity, 'hint');
+  assert.match(result.warnings[0].message, /"\/blog\/hello-world" points at a page that doesn't exist/);
 });

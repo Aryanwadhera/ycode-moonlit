@@ -59,7 +59,7 @@ export interface HtmlImportOptions {
    * point them at the page that holds the id. Without it they stay URLs and are
    * reported as warnings.
    */
-  unresolvedAnchors?: HtmlUnresolvedAnchor[];
+  unresolvedLinks?: HtmlUnresolvedLink[];
   /**
    * Receives every element marked `data-ycode-component="Name"`, in document
    * order. Without it the attribute is dropped with a warning.
@@ -87,33 +87,47 @@ export type HtmlYcodeMark =
   | { kind: 'toggle'; layerId: string; path: string; name: string }
   | { kind: 'menu'; layerId: string; path: string; name: string };
 
-/** An anchor link whose target isn't in the imported HTML or on the target page. */
-export interface HtmlUnresolvedAnchor {
+/**
+ * A site-internal link (`#id`, `/path`, `/path#id`) that the converter could not
+ * resolve by itself: the anchor id isn't in the imported HTML or on the target
+ * page, or the href names another page. At least one of `anchorId` / `pagePath`
+ * is set.
+ */
+export interface HtmlUnresolvedLink {
   layerId: string;
-  /** The `id` after `#`. */
-  anchorId: string;
+  /** The `id` after `#`, when the href has one. */
+  anchorId?: string;
   /** Element path in the source HTML. */
   path: string;
-  /** Site path before the `#` for `/path#id` and `/#id` hrefs; absent for plain `#id`. */
+  /** Site path for `/path`, `/path#id` and `/#id` hrefs; absent for plain `#id`. */
   pagePath?: string;
 }
 
-interface PendingAnchor {
+export interface ParsedSiteHref {
+  anchorId?: string;
+  pagePath?: string;
+}
+
+interface PendingAnchor extends ParsedSiteHref {
   layer: Layer;
-  anchorId: string;
   path: string;
-  pagePath?: string;
 }
 
-/** Splits `#id`, `/#id` and `/path#id` hrefs; null for anything else (external, no hash, empty id). */
-export function parseAnchorHref(href: string): { anchorId: string; pagePath?: string } | null {
+/**
+ * Splits site-internal hrefs: `#id`, `/`, `/path`, `/path#id`. Returns null for
+ * anything that should stay a plain URL — external and protocol-relative URLs,
+ * `#` alone, query strings, and paths to files (`/sitemap.xml`).
+ */
+export function parseSiteHref(href: string): ParsedSiteHref | null {
   const hash = href.indexOf('#');
-  if (hash === -1 || hash === href.length - 1) return null;
-  const before = href.slice(0, hash);
-  const anchorId = href.slice(hash + 1);
-  if (before === '') return { anchorId };
-  if (!before.startsWith('/') || before.startsWith('//')) return null;
-  return { anchorId, pagePath: before.length > 1 ? before.replace(/\/+$/, '') : '/' };
+  const before = hash === -1 ? href : href.slice(0, hash);
+  const anchorId = hash === -1 ? undefined : href.slice(hash + 1);
+  if (anchorId === '') return null;
+  if (before === '') return anchorId === undefined ? null : { anchorId };
+  if (!before.startsWith('/') || before.startsWith('//') || before.includes('?')) return null;
+  const pagePath = before.length > 1 ? before.replace(/\/+$/, '') : '/';
+  if (/\.[a-z0-9]+$/i.test(pagePath)) return null;
+  return anchorId === undefined ? { pagePath } : { anchorId, pagePath };
 }
 
 interface ImportContext {
@@ -125,7 +139,7 @@ interface ImportContext {
   tagRefCounts: Record<string, number>;
   htmlIds: Set<string>;
   pendingAnchors: PendingAnchor[];
-  unresolvedAnchors: HtmlUnresolvedAnchor[] | null;
+  unresolvedLinks: HtmlUnresolvedLink[] | null;
   componentMarks: HtmlComponentMark[] | null;
   ycodeMarks: HtmlYcodeMark[] | null;
 }
@@ -821,19 +835,25 @@ function addRef(ctx: ImportContext, ref: string, layerId: string, path: string):
 
 /**
  * Turns `href="#id"` links whose target exists here or on the page into native
- * anchor links. Everything else (`#id` with no local target, `/path#id`) is
- * handed to `options.unresolvedAnchors` for cross-page resolution, or reported.
+ * anchor links. Everything else (`#id` with no local target, `/path`, `/path#id`)
+ * is handed to `options.unresolvedLinks` for cross-page resolution; without that
+ * collector only the dangling `#id` case is reported.
  */
 function resolvePendingAnchors(ctx: ImportContext, existingIds: Set<string>): void {
   for (const { layer, anchorId, path, pagePath } of ctx.pendingAnchors) {
     const link = layer.variables?.link;
     if (!link) continue;
-    if (pagePath === undefined && (ctx.htmlIds.has(anchorId) || existingIds.has(anchorId))) {
+    if (pagePath === undefined && anchorId !== undefined && (ctx.htmlIds.has(anchorId) || existingIds.has(anchorId))) {
       const anchorLink: LinkSettings = { ...link, type: 'url', anchor_layer_id: anchorId };
       delete anchorLink.url;
       layer.variables = { ...layer.variables, link: anchorLink };
-    } else if (ctx.unresolvedAnchors) {
-      ctx.unresolvedAnchors.push({ layerId: layer.id, anchorId, path, ...(pagePath !== undefined ? { pagePath } : {}) });
+    } else if (ctx.unresolvedLinks) {
+      ctx.unresolvedLinks.push({
+        layerId: layer.id,
+        path,
+        ...(anchorId !== undefined ? { anchorId } : {}),
+        ...(pagePath !== undefined ? { pagePath } : {}),
+      });
     } else if (pagePath === undefined) {
       warn(ctx, path, `Link "#${anchorId}" has no element with id "${anchorId}" in the import or on the page, so it was kept as a URL`, layer.id);
     }
@@ -911,7 +931,7 @@ function elementToLayer(el: Element, ctx: ImportContext, path: string): Layer | 
       if (target) linkSettings.target = target;
       if (rel) linkSettings.rel = rel;
       layer.variables = { ...layer.variables, link: linkSettings };
-      const anchor = parseAnchorHref(href);
+      const anchor = parseSiteHref(href);
       if (anchor) ctx.pendingAnchors.push({ layer, path, ...anchor });
     }
   }
@@ -1142,7 +1162,7 @@ export function documentToLayers(doc: Document, options: HtmlImportOptions = {})
     tagRefCounts: {},
     htmlIds: new Set(),
     pendingAnchors: [],
-    unresolvedAnchors: options.unresolvedAnchors ?? null,
+    unresolvedLinks: options.unresolvedLinks ?? null,
     componentMarks: options.componentMarks ?? null,
     ycodeMarks: options.ycodeMarks ?? null,
   };

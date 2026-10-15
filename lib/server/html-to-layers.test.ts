@@ -150,7 +150,7 @@ test('still merges inline elements inside running text', () => {
 });
 
 test('turns #id links into native anchors when the target exists', () => {
-  const { layers, warnings, unresolvedAnchors } = htmlToLayersOnServer(`
+  const { layers, warnings, unresolvedLinks } = htmlToLayersOnServer(`
     <div class="flex"><a href="#features" target="_self">Features</a><a href="#faq">FAQ</a><a href="#missing">Nope</a></div>
     <section id="features"></section>`, { anchorIds: ['faq'] });
 
@@ -160,7 +160,7 @@ test('turns #id links into native anchors when the target exists', () => {
   assert.equal(missing.variables?.link?.url?.data.content, '#missing');
   // Unresolved anchors are handed to the caller for cross-page resolution instead of warned about here.
   assert.deepEqual(warnings, []);
-  assert.deepEqual(unresolvedAnchors.map((a) => a.anchorId), ['missing']);
+  assert.deepEqual(unresolvedLinks.map((a) => a.anchorId), ['missing']);
 });
 
 test('returns refs for ids and data-ref without keeping data-ref', () => {

@@ -6,8 +6,8 @@ import { lintDesign } from '@/lib/mcp/design-lint';
 import { collectFontFamiliesFromDesign, ensureFontsInstalled, fontWarnings } from '@/lib/mcp/font-install';
 import { extractMarkedComponents } from '@/lib/mcp/html-import-components';
 import type { ImportedComponent } from '@/lib/mcp/html-import-components';
-import { resolveCrossPageAnchors } from '@/lib/mcp/html-import-anchors';
-import type { AnchorPageSource } from '@/lib/mcp/html-import-anchors';
+import { resolveCrossPageLinks } from '@/lib/mcp/html-import-links';
+import type { LinkPageSource } from '@/lib/mcp/html-import-links';
 import { applyCmsMarks, applyToggleMarks } from '@/lib/mcp/html-import-marks';
 import type { ImportedCollectionList, ImportedToggle } from '@/lib/mcp/html-import-marks';
 import { getCachedLayers, saveCachedLayers } from '@/lib/mcp/page-layers';
@@ -61,10 +61,11 @@ function groupWarnings(warnings: HtmlImportWarning[]): { groups: WarningGroup[];
 }
 
 /**
- * Every draft page with its path and html ids, for pointing `#id` links at the
- * page that holds the id. The page being imported into uses the in-memory tree.
+ * Every draft page with its path and html ids, for pointing `/path` links at
+ * the page with that path and `#id` links at the page that holds the id. The
+ * page being imported into uses the in-memory tree.
  */
-async function loadAnchorPageSources(currentPageId: string | undefined, currentTree: Layer[]): Promise<AnchorPageSource[]> {
+async function loadLinkPageSources(currentPageId: string | undefined, currentTree: Layer[]): Promise<LinkPageSource[]> {
   const [pages, folders, allLayers] = await Promise.all([getAllDraftPages(), getAllDraftPageFolders(), getAllDraftLayers()]);
   const layersByPage = new Map(allLayers.map((row) => [row.page_id, row.layers ?? []] as const));
   return pages
@@ -168,10 +169,12 @@ text, which merge into the text as rich-text marks and lose their classes. Inlin
 the only content of their parent stay separate layers when they have their own classes or the
 parent is flex/grid (nav links, button rows, pills).
 
-LINKS: href="#id" becomes a native anchor link when an element with that id is in the HTML or
-already on the page. Otherwise, and for "/#id" or "/pricing#plans", it becomes a page + anchor
-link to the page holding that id (so a shared navbar scrolls correctly from every page). Plain
-"/path" hrefs stay URLs.
+LINKS: href="/pricing" becomes a page link to the page at that path, so it survives slug changes;
+paths with no page (CMS item URLs, pages not built yet) stay URLs with a hint. href="#id" becomes
+a native anchor link when an element with that id is in the HTML or already on the page.
+Otherwise, and for "/#id" or "/pricing#plans", it becomes a page + anchor link to the page holding
+that id (so a shared navbar scrolls correctly from every page). "page_links" in the response
+counts the hrefs converted this way.
 
 REFS: elements with an id or data-ref="name" are returned in "refs" as { name: layer_id }, so you
 can target them afterwards without get_layers. data-ref is not kept on the layer. header, footer, nav,
@@ -305,20 +308,21 @@ HTML; add them afterwards with their tools.`,
         warnings.push(...toggled.warnings);
       }
 
-      // Anchor links to sections on other pages become page + anchor links, so a
-      // navbar that turns into a shared component keeps working on every page.
-      // Pure layer data, so it also runs before component extraction.
-      let anchorsResolved = 0;
-      if (converted.unresolvedAnchors.length > 0) {
-        const sources = await loadAnchorPageSources(page_id, baseTree);
-        const anchored = resolveCrossPageAnchors(converted.layers, converted.unresolvedAnchors, {
+      // "/path" and "#id" links to other pages become page (+ anchor) links, so
+      // they survive slug changes and a navbar that turns into a shared component
+      // keeps working on every page. Pure layer data, so it runs before
+      // component extraction.
+      let pageLinksResolved = 0;
+      if (converted.unresolvedLinks.length > 0) {
+        const sources = await loadLinkPageSources(page_id, baseTree);
+        const linked = resolveCrossPageLinks(converted.layers, converted.unresolvedLinks, {
           pages: sources,
           currentPageId: page_id,
           localIds: collectHtmlIds(converted.layers),
         });
-        converted.layers = anchored.layers;
-        anchorsResolved = anchored.resolved.length;
-        warnings.push(...anchored.warnings);
+        converted.layers = linked.layers;
+        pageLinksResolved = linked.resolved.length;
+        warnings.push(...linked.warnings);
       }
 
       if (componentMarks.length > 0 && !page_id) {
@@ -347,7 +351,7 @@ HTML; add them afterwards with their tools.`,
               ref_names: refKeys.length > 0 ? refKeys : undefined,
               component_names: componentNames.length > 0 ? componentNames : undefined,
               menu_toggles: toggles.length > 0 ? toggles.length : undefined,
-              cross_page_anchors: anchorsResolved > 0 ? anchorsResolved : undefined,
+              page_links: pageLinksResolved > 0 ? pageLinksResolved : undefined,
               cms_marks: page_id && cmsMarks.length > 0 ? cmsMarks.length : undefined,
               warning_count: warnings.length,
               warnings: groups.length > 0 ? groups : undefined,
@@ -413,7 +417,7 @@ HTML; add them afterwards with their tools.`,
             refs: refKeys.length > 0 ? refs : undefined,
             components: Object.keys(components).length > 0 ? components : undefined,
             menu_toggles: toggles.length > 0 ? toggles : undefined,
-            cross_page_anchors: anchorsResolved > 0 ? anchorsResolved : undefined,
+            page_links: pageLinksResolved > 0 ? pageLinksResolved : undefined,
             cms,
             warning_count: warnings.length,
             warnings: groups.length > 0 ? groups : undefined,
