@@ -3,7 +3,7 @@ import { SUPABASE_QUERY_LIMIT } from '@/lib/supabase-constants';
 import { getKnexClient } from '@/lib/knex-client';
 import type { CollectionItemValue, CollectionFieldType } from '@/types';
 import { isValidUUID } from '@/lib/utils';
-import { castValue, valueToString, slugify } from '../collection-utils';
+import { castValue, valueToString, slugify, hasCollectionValueChanges } from '../collection-utils';
 import { generateCollectionItemContentHash } from '../hash-utils';
 import { randomUUID } from 'crypto';
 import { deleteTranslationsInBulk, markTranslationsIncomplete } from '@/lib/repositories/translationRepository';
@@ -20,7 +20,10 @@ import { deleteTranslationsInBulk, markTranslationsIncomplete } from '@/lib/repo
  * References fields using FK (field_id).
  */
 
-/** Update the content_hash on a collection_items row */
+/**
+ * Update the content_hash on a collection_items row.
+ * Skips rows whose hash already matches so a no-op save leaves `updated_at` alone.
+ */
 async function updateContentHash(itemId: string, isPublished: boolean, hash: string): Promise<void> {
   const client = await getSupabaseAdmin();
   if (!client) throw new Error('Supabase client not configured');
@@ -29,7 +32,8 @@ async function updateContentHash(itemId: string, isPublished: boolean, hash: str
     .from('collection_items')
     .update({ content_hash: hash, updated_at: new Date().toISOString() })
     .eq('id', itemId)
-    .eq('is_published', isPublished);
+    .eq('is_published', isPublished)
+    .or(`content_hash.is.null,content_hash.neq.${hash}`);
 
   if (error) throw new Error(`Failed to update content_hash: ${error.message}`);
 }
@@ -557,15 +561,13 @@ export async function setValuesByFieldName(
     throw new Error('Supabase client not configured');
   }
 
-  // Get current values to detect changes (only for draft updates)
-  let currentValuesMap: Record<string, string | null> = {};
-  if (!is_published) {
-    const currentValues = await getValuesByItemId(item_id, false);
-    currentValuesMap = currentValues.reduce((acc, val) => {
-      acc[val.field_id] = val.value;
-      return acc;
-    }, {} as Record<string, string | null>);
-  }
+  // Current values tell real edits apart from no-op saves, which both the
+  // `updated_at` bump and translation invalidation depend on
+  const currentValues = await getValuesByItemId(item_id, is_published);
+  const currentValuesMap = currentValues.reduce((acc, val) => {
+    acc[val.field_id] = val.value;
+    return acc;
+  }, {} as Record<string, string | null>);
 
   // Get field mappings to validate field IDs and get types
   // Fields are fetched with the same is_published status as the values
@@ -604,13 +606,16 @@ export async function setValuesByFieldName(
     valuesToSet[fieldId] = stringValue;
   }
 
-  // Auto-bump the virtual `updated_at` field whenever values are being set,
-  // unless the caller explicitly provided one. The DB column on
-  // `collection_items` is bumped via updateContentHash below, but the
-  // user-facing "Updated Date" column in the CMS table reads this virtual
-  // field — without this, edits would never appear to refresh.
+  // Auto-bump the virtual `updated_at` field, unless the caller explicitly
+  // provided one. The DB column on `collection_items` is bumped via
+  // updateContentHash below, but the user-facing "Updated Date" column in the
+  // CMS table reads this virtual field — without this, edits would never
+  // appear to refresh. Bulk re-saves that change nothing must not bump it:
+  // the timestamp feeds content_hash, sitemap <lastmod> and any structured
+  // data bound to it, so a no-op save would advertise fake freshness.
   const updatedAtFieldId = Object.keys(fieldKeyMap).find(id => fieldKeyMap[id] === 'updated_at');
-  const autoBumpedUpdatedAt = updatedAtFieldId && !(updatedAtFieldId in valuesToSet);
+  const hasValueChange = hasCollectionValueChanges(valuesToSet, currentValuesMap, updatedAtFieldId);
+  const autoBumpedUpdatedAt = !!updatedAtFieldId && !(updatedAtFieldId in valuesToSet) && hasValueChange;
   if (autoBumpedUpdatedAt) {
     valuesToSet[updatedAtFieldId!] = new Date().toISOString();
   }
