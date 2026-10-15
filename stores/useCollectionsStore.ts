@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { collectionsApi } from '@/lib/api';
-import { sortCollectionsByOrder, getSortParams } from '@/lib/collection-utils';
+import { sortCollectionsByOrder, getSortParams, hasCollectionValueChanges } from '@/lib/collection-utils';
 import { MULTI_ASSET_COLLECTION_ID, findStatusFieldId, buildStatusValue, getStatusFlagsFromAction } from '@/lib/collection-field-utils';
 import type { StatusAction } from '@/lib/collection-field-utils';
 import { useAssetsStore } from '@/stores/useAssetsStore';
@@ -761,11 +761,12 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
     }
 
     // Optimistically bump the virtual `updated_at` field to mirror the
-    // server-side auto-bump in setValuesByFieldName.
+    // server-side auto-bump in setValuesByFieldName, which skips no-op saves.
     const now = new Date().toISOString();
     const updatedAtFieldId = collectionFields.find(f => f.key === 'updated_at')?.id;
+    const hasValueChange = hasCollectionValueChanges(values, previousItem?.values ?? {}, updatedAtFieldId);
     const optimisticTimestamps: Record<string, string> = {};
-    if (updatedAtFieldId && !(updatedAtFieldId in values)) {
+    if (updatedAtFieldId && !(updatedAtFieldId in values) && hasValueChange) {
       optimisticTimestamps[updatedAtFieldId] = now;
     }
 
@@ -777,7 +778,7 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
             ? {
               ...item,
               values: { ...item.values, ...values, ...optimisticStatus, ...optimisticTimestamps },
-              updated_at: now,
+              updated_at: hasValueChange ? now : item.updated_at,
             }
             : item
         ),
