@@ -722,6 +722,12 @@ repeated card; its parent div is the list container that holds the grid/gap):
 Show/hide ANY layer conditionally (sale badges, empty states) with set_layer_visibility —
 same condition model as set_collection_filters.
 
+**Checking CMS output without publishing:** export_layer_html with rendered: true returns the
+section as the published page would show it — Collection Lists repeated with real draft items,
+fields filled in, visibility applied, links resolved. On a dynamic page it renders the first
+item (or collection_item_slug). Use it once after wiring bindings instead of guessing from the
+raw layer tree.
+
 **Dynamic pages:** \`create_collection_pages\` scaffolds the folder, the index (listing) page and
 the dynamic detail page bound to the collection's slug field with per-item SEO title /
 description in one call — use it instead of create_page_folder + create_page + update_page_settings.
