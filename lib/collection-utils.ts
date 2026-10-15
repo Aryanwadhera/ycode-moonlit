@@ -196,6 +196,31 @@ export function valueToString(value: any, type: CollectionFieldType): string | n
 }
 
 /**
+ * Check whether a save actually changes any of an item's stored values.
+ *
+ * Guards the auto `updated_at` bump: re-saving identical content (bulk edits,
+ * re-imports, translation passes) must not refresh the timestamp, which feeds
+ * the CMS "Updated date" column, content_hash, sitemap <lastmod> and any
+ * structured data bound to it.
+ *
+ * @param values - Values being written, keyed by field ID
+ * @param currentValues - Currently stored values, keyed by field ID
+ * @param ignoreFieldId - Field to exclude from the comparison (the auto-managed `updated_at`)
+ */
+export function hasCollectionValueChanges(
+  values: Record<string, unknown>,
+  currentValues: Record<string, string | null | undefined>,
+  ignoreFieldId?: string
+): boolean {
+  const normalize = (value: unknown): string => (value === null || value === undefined ? '' : String(value));
+
+  return Object.entries(values).some(
+    ([fieldId, value]) =>
+      fieldId !== ignoreFieldId && normalize(value) !== normalize(currentValues[fieldId])
+  );
+}
+
+/**
  * Generate a slug from a name with international character support
  * Uses the same transliteration logic as page slugs
  * @param name - The name to slugify
