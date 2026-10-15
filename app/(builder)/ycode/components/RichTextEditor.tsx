@@ -71,6 +71,7 @@ import { flattenFieldGroups, filterFieldGroupsByType, RICH_TEXT_ONLY_FIELD_TYPES
 import { buildFieldVariableData } from '@/lib/variable-format-utils';
 import { getPaginationLayerKind, PAGINATION_VARIABLE_LABELS, type PaginationVariableKey } from '@/lib/pagination-text-utils';
 import { createDynamicVariableNodeView } from '@/lib/dynamic-variable-view';
+import { parseRichTextDoc, toEditorJSON } from '@/lib/tiptap-utils';
 import { RichTextComponent } from '@/lib/tiptap-extensions/rich-text-component';
 import { RichTextLink, getLinkSettingsFromMark } from '@/lib/tiptap-extensions/rich-text-link';
 import { RichTextImage } from '@/lib/tiptap-extensions/rich-text-image';
@@ -132,23 +133,6 @@ export interface RichTextEditorHandle {
 }
 
 export type { FieldVariable } from '@/types';
-
-/**
- * Rename legacy `image` nodes to `richTextImage` so migrated docs render in the
- * editor. The new schema only registers `richTextImage`; unknown node types are
- * silently dropped on load.
- */
-function normalizeLegacyTiptapDoc<T>(doc: T): T {
-  if (!doc || typeof doc !== 'object') return doc;
-  const node = doc as any;
-  if (node.type === 'image') {
-    node.type = 'richTextImage';
-  }
-  if (Array.isArray(node.content)) {
-    node.content.forEach((child: any) => normalizeLegacyTiptapDoc(child));
-  }
-  return doc;
-}
 
 /**
  * DynamicVariable with React node view for the sidebar rich-text editor.
@@ -549,30 +533,9 @@ const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(({
   const editor = useEditor({
     immediatelyRender: true,
     extensions,
-    content: (() => {
-      if (withFormatting) {
-        // For formatting mode, expect TipTap JSON
-        if (typeof value === 'object' && value !== null) {
-          return normalizeLegacyTiptapDoc(value);
-        }
-        // Try to parse JSON string (in case DB returned stringified JSON)
-        if (typeof value === 'string' && value.startsWith('{')) {
-          try {
-            return normalizeLegacyTiptapDoc(JSON.parse(value));
-          } catch {
-            // Not valid JSON, fall through
-          }
-        }
-        // Plain string (e.g. legacy dynamic_text content) — wrap in TipTap doc
-        if (typeof value === 'string' && value.trim()) {
-          return { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: value }] }] };
-        }
-        // Truly empty or invalid — empty doc
-        return { type: 'doc', content: [{ type: 'paragraph' }] };
-      }
-      // For non-formatting mode, parse string with inline variables
-      return parseValueToContent(typeof value === 'string' ? value : '', fields, undefined, allFields);
-    })(),
+    content: withFormatting
+      ? parseRichTextDoc(value)
+      : parseValueToContent(typeof value === 'string' ? value : '', fields, undefined, allFields),
     editorProps: {
       attributes: {
         class: cn(
@@ -717,25 +680,12 @@ const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(({
     // Compare current editor content with incoming value
     const currentEditorContent = editor.getJSON();
     let hasChanged = false;
+    const incomingDoc = withFormatting ? parseRichTextDoc(value) : null;
 
-    if (withFormatting) {
-      // For formatting mode, compare TipTap JSON
-      let incomingContent = value;
-      if (typeof value === 'string' && value.startsWith('{')) {
-        try {
-          incomingContent = JSON.parse(value);
-        } catch {
-          incomingContent = null;
-        }
-      }
-      if (typeof incomingContent === 'object' && incomingContent !== null) {
-        hasChanged = JSON.stringify(currentEditorContent) !== JSON.stringify(incomingContent);
-      } else {
-        // Empty or invalid value - check if editor has content
-        hasChanged = currentEditorContent.content?.some((block: any) =>
-          block.content && block.content.length > 0
-        ) ?? false;
-      }
+    if (incomingDoc) {
+      // Compare through the schema: the editor fills in default attrs (e.g.
+      // ordered list `start`), which a raw stored doc may lack
+      hasChanged = JSON.stringify(currentEditorContent) !== JSON.stringify(toEditorJSON(editor.schema, incomingDoc));
     } else if (typeof value === 'string') {
       // Compare string representations
       const currentValue = convertContentToValue(currentEditorContent);
@@ -772,22 +722,8 @@ const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(({
     if (hasChanged) {
       // Check if editor was focused before updating content
       const wasFocused = editor.isFocused;
-      let content: any;
-      if (withFormatting) {
-        if (typeof value === 'object' && value !== null) {
-          content = value;
-        } else if (typeof value === 'string' && value.startsWith('{')) {
-          try {
-            content = JSON.parse(value);
-          } catch {
-            content = { type: 'doc', content: [{ type: 'paragraph' }] };
-          }
-        } else {
-          content = { type: 'doc', content: [{ type: 'paragraph' }] };
-        }
-      } else {
-        content = parseValueToContent(typeof value === 'string' ? value : '', fields, undefined, allFields);
-      }
+      let content: any = incomingDoc
+        ?? parseValueToContent(typeof value === 'string' ? value : '', fields, undefined, allFields);
       // Refresh cached labels on initial set as well — the stored value may have
       // stale labels from migrations or older edits.
       if (fields && content?.content) {
@@ -796,12 +732,9 @@ const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(({
           content = { ...content, content: refreshed.content };
         }
       }
-      editor.commands.setContent(content);
-
-      // Reset internal update flag — setContent triggers onUpdate synchronously
-      // which sets isInternalUpdateRef=true, but this was a programmatic update
-      // (not a user edit), so we must clear it to allow the next useEffect to run
-      isInternalUpdateRef.current = false;
+      // Loading an external value is not a user edit: emitting it would hand
+      // the editor's re-serialized doc back as a change and mark it dirty
+      editor.commands.setContent(content, { emitUpdate: false });
 
       // Only focus if editor was already focused (user was actively editing)
       if (wasFocused) {
@@ -813,8 +746,7 @@ const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(({
       if (json.content) {
         const refreshed = refreshNodeLabels(json.content);
         if (refreshed.updated) {
-          editor.commands.setContent({ ...json, content: refreshed.content });
-          isInternalUpdateRef.current = false;
+          editor.commands.setContent({ ...json, content: refreshed.content }, { emitUpdate: false });
         }
       }
     }
