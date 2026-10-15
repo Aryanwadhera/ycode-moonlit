@@ -529,7 +529,9 @@ collapse to one column via a mobile-breakpoint update_design.
 
 Verify these as you build, from the ref_ids and design you just sent — do NOT re-fetch the tree.
 batch_operations also returns \`design_warnings\` when your output violates these rules (structure,
-missing typography, low contrast) — fix every warning in your next batch before moving on:
+missing typography, low contrast). Each has a severity: fix every "error" (renders wrong) and
+"warning" (looks unfinished) in your next batch before moving on; "hint" is advice you may skip
+when the design calls for it:
 - **NEVER** put content directly inside a section or skip the container pattern (even for full-width backgrounds: the section handles the background, the container constrains the content). Sections group elements — no flat lists in body
 - **NEVER** leave text without typography design — always set fontSize, fontWeight, lineHeight
 - **NEVER** forget \`isActive: true\` on design categories — properties won't apply without it

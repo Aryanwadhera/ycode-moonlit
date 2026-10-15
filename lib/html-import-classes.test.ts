@@ -79,3 +79,20 @@ test('rewrites negative margins as arbitrary values the spacing controls edit', 
     ['ml-[-0.75rem]', 'mt-[-12px]', 'md:mx-[-1px]', '-mb-auto', 'ml-3', '-translate-x-4'],
   );
 });
+
+test('breakpoint-only values for non-inherited properties get the CSS default below the breakpoint', () => {
+  assert.deepEqual(convertMobileFirstClasses(['lg:rounded-xl', 'lg:shadow-xl', 'lg:grayscale']).classes, [
+    'rounded-xl', 'max-lg:rounded-none',
+    'shadow-xl', 'max-lg:shadow-none',
+    'grayscale', 'max-lg:filter-none',
+  ]);
+  assert.deepEqual(convertMobileFirstClasses(['md:justify-self-end', 'md:flex-1']).classes, [
+    'justify-self-end', 'max-md:justify-self-auto',
+    'flex-1', 'max-md:flex-initial',
+  ]);
+});
+
+test('breakpoint-only values for inherited properties stay as written', () => {
+  // Font size inherits from the parent, so there is no constant to use below the breakpoint.
+  assert.deepEqual(convertMobileFirstClasses(['lg:text-5xl', 'lg:tracking-tight']).classes, ['lg:text-5xl', 'lg:tracking-tight']);
+});

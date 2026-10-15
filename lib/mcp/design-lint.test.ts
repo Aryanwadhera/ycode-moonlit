@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { lintDesign } from './design-lint';
+import type { DesignIssue } from './design-lint';
 import type { Layer } from '../../types';
 
 const text = (id: string, classes = ''): Layer => ({ id, name: 'text', classes });
-const trioWarnings = (warnings: string[]) => warnings.filter((w) => w.includes('full trio'));
+const messages = (issues: DesignIssue[]) => issues.map((issue) => issue.message);
+const trioWarnings = (issues: DesignIssue[]) => messages(issues).filter((w) => w.includes('full trio'));
 
 test('typography set on a parent counts for the text inside it', () => {
   const page: Layer[] = [{
@@ -48,7 +50,7 @@ const link = (id: string, classes: string, children: Layer[] = []): Layer => ({
   variables: { link: { type: 'url', url: { type: 'dynamic_text', data: { content: 'https://x.y' } } } },
   children,
 });
-const hoverWarnings = (warnings: string[]) => warnings.filter((w) => w.includes('hover state'));
+const hoverWarnings = (issues: DesignIssue[]) => messages(issues).filter((w) => w.includes('hover state'));
 
 test('links and buttons without a hover treatment are reported once', () => {
   const page: Layer[] = [{
@@ -77,11 +79,11 @@ test('a multi-column grid on a Collection List layer is flagged', () => {
     variables: { collection: { id: 'col-1' } },
     children: [text('t', 'text-[16px] font-medium leading-6')],
   };
-  const warnings = lintDesign([{ id: 'wrap', name: 'div', classes: '', children: [collection] }], new Set(['wrap']));
+  const warnings = messages(lintDesign([{ id: 'wrap', name: 'div', classes: '', children: [collection] }], new Set(['wrap'])));
   assert.ok(warnings.some((w) => w.startsWith('[list] is a Collection List') && w.includes('3-column grid')), warnings.join('\n'));
 
   const fixed: Layer = { ...collection, classes: 'flex flex-col gap-[8px]' };
-  const none = lintDesign([{ id: 'wrap', name: 'div', classes: 'grid grid-cols-3', children: [fixed] }], new Set(['wrap']));
+  const none = messages(lintDesign([{ id: 'wrap', name: 'div', classes: 'grid grid-cols-3', children: [fixed] }], new Set(['wrap'])));
   assert.ok(!none.some((w) => w.includes('Collection List')), none.join('\n'));
 });
 
@@ -96,9 +98,29 @@ test('a nav that hides links on small screens without a click toggle is flagged'
       { id: 'toggle', name: 'button', classes: 'hidden max-lg:flex hover:opacity-80', interactions },
     ],
   });
-  const flagged = lintDesign([nav()], new Set(['nav']));
+  const flagged = messages(lintDesign([nav()], new Set(['nav'])));
   assert.ok(flagged.some((w) => w.includes('hides links on tablet/mobile')), flagged.join('\n'));
 
-  const ok = lintDesign([nav([{ id: 'i', trigger: 'click', timeline: { breakpoints: ['mobile'], repeat: 0, yoyo: true }, tweens: [] }])], new Set(['nav']));
+  const ok = messages(lintDesign([nav([{ id: 'i', trigger: 'click', timeline: { breakpoints: ['mobile'], repeat: 0, yoyo: true }, tweens: [] }])], new Set(['nav'])));
   assert.ok(!ok.some((w) => w.includes('hides links on tablet/mobile')), ok.join('\n'));
+});
+
+test('issues carry a severity and are ordered errors → warnings → hints', () => {
+  const page: Layer[] = [{
+    id: 'sec',
+    name: 'section',
+    classes: 'flex',
+    children: [
+      // content directly in a section: error
+      text('title', 'text-[32px] font-bold leading-tight'),
+      // flex without a direction (on the section itself): hint
+      text('sub', 'text-[16px] font-normal leading-6'),
+    ],
+  }];
+  const issues = lintDesign(page, new Set(['sec']));
+  const severities = issues.map((issue) => issue.severity);
+  assert.equal(severities[0], 'error', JSON.stringify(issues));
+  assert.ok(severities.includes('hint'), JSON.stringify(issues));
+  const order = { error: 0, warning: 1, hint: 2 };
+  assert.deepEqual(severities, [...severities].sort((a, b) => order[a] - order[b]));
 });

@@ -150,8 +150,10 @@ const CONVERTIBLE_STATES = new Set(['hover', 'focus', 'active', 'disabled', 'cur
 /**
  * Class reproducing the browser default for a property, used as the mobile
  * value when a breakpoint class has no un-prefixed counterpart (md:col-span-2
- * alone means "1 column below md"). Inherited properties (font, color) are
- * absent on purpose: their default is the parent's value, not a constant.
+ * alone means "1 column below md"). Inherited properties (font size/weight,
+ * line height, letter spacing, color, text transform) are absent on purpose:
+ * their default is the parent's value, not a constant, so a breakpoint-only
+ * class for them stays as written and is reported.
  */
 const MOBILE_DEFAULTS: Record<string, string> = {
   flexDirection: 'flex-row',
@@ -189,6 +191,33 @@ const MOBILE_DEFAULTS: Record<string, string> = {
   right: 'right-[auto]',
   bottom: 'bottom-[auto]',
   left: 'left-[auto]',
+  justifyItems: 'justify-items-stretch',
+  justifySelf: 'justify-self-auto',
+  flex: 'flex-initial',
+  flexGrow: 'grow-0',
+  flexShrink: 'shrink',
+  gridTemplateRows: 'grid-rows-none',
+  minWidth: 'min-w-auto',
+  minHeight: 'min-h-auto',
+  maxHeight: 'max-h-none',
+  aspectRatio: 'aspect-auto',
+  objectFit: 'object-fill',
+  overflow: 'overflow-visible',
+  zIndex: 'z-auto',
+  borderRadius: 'rounded-none',
+  borderWidth: 'border-0',
+  backgroundColor: 'bg-transparent',
+  boxShadow: 'shadow-none',
+  opacity: 'opacity-100',
+  blur: 'blur-none',
+  backdropBlur: 'backdrop-blur-none',
+  filter: 'filter-none',
+  backdropFilter: 'backdrop-filter-none',
+  textDecoration: 'no-underline',
+  scale: 'scale-100',
+  rotate: 'rotate-0',
+  translateX: 'translate-x-0',
+  translateY: 'translate-y-0',
 };
 
 interface ResponsiveGroup {

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { applyDesignToLayer } from './utils';
+import { classesToDesign } from '../tailwind-class-mapper';
 import type { Layer } from '../../types';
 
 const classList = (layer: Layer) =>
@@ -78,4 +79,30 @@ test('transition easing accepts both "out" and "ease-out" and never doubles the 
     transitions: { isActive: true, easing: 'cubic-bezier(0.4, 0, 0.2, 1)' },
   }));
   assert.ok(custom.includes('ease-[cubic-bezier(0.4,_0,_0.2,_1)]'), custom.join(' '));
+});
+
+test('filters and grid self-alignment become classes', () => {
+  const layer = applyDesignToLayer(
+    { id: 'img', name: 'image', classes: 'grayscale' },
+    {
+      effects: { isActive: true, filter: 'grayscale(1) brightness(0.5)', backdropFilter: 'saturate(180%)' },
+      layout: { isActive: true, justifySelf: 'end' },
+    },
+    'desktop',
+    'neutral',
+  );
+  const classes = String(layer.classes).split(' ');
+  assert.ok(classes.includes('filter-[grayscale(1)_brightness(0.5)]'));
+  assert.ok(classes.includes('backdrop-filter-[saturate(180%)]'));
+  assert.ok(classes.includes('justify-self-end'));
+  // The new filter replaces the named utility instead of stacking on it.
+  assert.ok(!classes.includes('grayscale'));
+});
+
+test('named filter utilities are read back into one filter value', () => {
+  const design = classesToDesign('grayscale brightness-75 -hue-rotate-15 backdrop-saturate-150 backdrop-blur-md opacity-50 justify-items-center');
+  assert.equal(design?.effects?.filter, 'grayscale(100%) brightness(0.75) hue-rotate(-15deg)');
+  assert.equal(design?.effects?.backdropFilter, 'saturate(1.5)');
+  assert.equal(design?.effects?.backdropBlur, 'md');
+  assert.equal(design?.layout?.justifyItems, 'center');
 });

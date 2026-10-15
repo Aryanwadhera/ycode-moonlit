@@ -54,8 +54,19 @@ test('warns about everything dropped or converted lossily', () => {
   expectSome(/Inline <span> inside text lost its class/);
   expectSome(/<progress> was imported as a plain div/);
   expectSome(/Unknown tag <custom-el>/);
-  expectSome(/Link "#pricing" has no element with id "pricing"/);
   expectSome(/Inline style "--brand: red" was dropped/);
+});
+
+test('warnings carry a severity so agents can skip hints', () => {
+  const { warnings } = htmlToLayersOnServer(`
+    <div class="space-y-4">
+      <img src="/hero.png" alt="Hero">
+      <p>Hello <span class="text-[#f00]">world</span></p>
+    </div>`);
+  const severityOf = (re: RegExp) => warnings.find((w) => re.test(w.message))?.severity;
+  assert.equal(severityOf(/Class "space-y-4"/), 'hint');
+  assert.equal(severityOf(/<img> src "\/hero.png"/), 'error');
+  assert.equal(severityOf(/Inline <span> inside text lost its class/), 'warning');
 });
 
 test('keeps accessibility and form-field attributes', () => {
@@ -139,7 +150,7 @@ test('still merges inline elements inside running text', () => {
 });
 
 test('turns #id links into native anchors when the target exists', () => {
-  const { layers, warnings } = htmlToLayersOnServer(`
+  const { layers, warnings, unresolvedAnchors } = htmlToLayersOnServer(`
     <div class="flex"><a href="#features" target="_self">Features</a><a href="#faq">FAQ</a><a href="#missing">Nope</a></div>
     <section id="features"></section>`, { anchorIds: ['faq'] });
 
@@ -147,9 +158,9 @@ test('turns #id links into native anchors when the target exists', () => {
   assert.deepEqual(features.variables?.link, { type: 'url', anchor_layer_id: 'features', target: '_self' });
   assert.equal(faq.variables?.link?.anchor_layer_id, 'faq');
   assert.equal(missing.variables?.link?.url?.data.content, '#missing');
-  assert.deepEqual(warnings.map((w) => w.message), [
-    'Link "#missing" has no element with id "missing" in the import or on the page, so it was kept as a URL',
-  ]);
+  // Unresolved anchors are handed to the caller for cross-page resolution instead of warned about here.
+  assert.deepEqual(warnings, []);
+  assert.deepEqual(unresolvedAnchors.map((a) => a.anchorId), ['missing']);
 });
 
 test('returns refs for ids and data-ref without keeping data-ref', () => {

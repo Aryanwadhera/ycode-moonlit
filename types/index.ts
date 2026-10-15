@@ -18,6 +18,9 @@ export interface LayoutDesign {
   justifyContent?: string;
   alignItems?: string;
   alignSelf?: string;
+  // Grid alignment along the inline axis (justify-items on the grid, justify-self on a cell)
+  justifyItems?: string;
+  justifySelf?: string;
   // Flex child (how this layer behaves inside a flex parent)
   flex?: string; // '1' | 'auto' | 'initial' | 'none'
   flexGrow?: string; // '1' | '0'
