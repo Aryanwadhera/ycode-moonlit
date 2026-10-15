@@ -147,7 +147,8 @@ function findPlacement(
 export function registerHtmlImportTools(server: McpServer) {
   server.tool(
     'import_html',
-    `Import HTML with Tailwind classes as native, editable Ycode layers in one call.
+    `Import HTML with Tailwind classes as native, editable Ycode layers in one call (see https://docs.ycode.com).
+The HTML is parsed on the server and converted to layers; it is not sent to any external API and the URLs in it are not requested. The only outside lookup is installing Google Fonts named in the classes (see FONTS).
 Use ONLY when the user asks for HTML import or provides HTML/Tailwind markup. Otherwise build with
 add_layout and the layer tools (add_layer, batch_operations, update_layer_design).
 

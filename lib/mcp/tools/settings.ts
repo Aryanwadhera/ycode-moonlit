@@ -19,6 +19,13 @@ const SETTING_KEYS_DOC = `Supported keys (the same ones Settings > General write
 - timezone: IANA timezone, e.g. "Europe/Vilnius"
 Redirects are managed with the redirect tools, not here.`;
 
+const settingValueSchema = z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.record(z.string(), z.unknown()),
+]);
+
 export function registerSettingsTools(server: McpServer) {
   server.tool(
     'get_settings',
@@ -61,7 +68,7 @@ ${SETTING_KEYS_DOC}`,
 ${SETTING_KEYS_DOC}`,
     {
       key: z.string().describe('Setting key (e.g. "site_name", "favicon_asset_id")'),
-      value: z.unknown().describe('Setting value (string, number, boolean, or object)'),
+      value: settingValueSchema.describe('Setting value (string, number, boolean, or object)'),
     },
     async ({ key, value }) => {
       const setting = await setSetting(key, value);
@@ -78,7 +85,7 @@ ${SETTING_KEYS_DOC}`,
     'set_settings_batch',
     'Set multiple site settings at once. Pass null as value to delete a setting. See set_setting for the supported keys.',
     {
-      settings: z.record(z.string(), z.unknown()).describe('Object of key-value pairs to set. Use null to delete a key.'),
+      settings: z.record(z.string(), settingValueSchema.nullable()).describe('Object of key-value pairs to set. Use null to delete a key.'),
     },
     async ({ settings }) => {
       const count = await setSettings(settings);

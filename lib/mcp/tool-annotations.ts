@@ -215,7 +215,12 @@ export function getToolAnnotations(name: string): { title: string; annotations: 
   if (!meta) {
     throw new Error(`MCP tool "${name}" has no entry in lib/mcp/tool-annotations.ts`);
   }
-  return { title: meta.title, annotations: ANNOTATIONS_BY_KIND[meta.kind] };
+  // The Claude connector directory reads the title from `annotations.title`,
+  // while newer clients read the top-level tool `title`, so both are set.
+  return {
+    title: meta.title,
+    annotations: { title: meta.title, ...ANNOTATIONS_BY_KIND[meta.kind] },
+  };
 }
 
 type RawToolHandler = Parameters<McpServer['registerTool']>[2];
