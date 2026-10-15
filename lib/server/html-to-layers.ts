@@ -9,7 +9,7 @@
 import { parseHTML } from 'linkedom';
 
 import { documentToLayers } from '@/lib/html-layer-converter';
-import type { HtmlComponentMark, HtmlImportWarning } from '@/lib/html-layer-converter';
+import type { HtmlComponentMark, HtmlImportWarning, HtmlUnresolvedLink, HtmlYcodeMark } from '@/lib/html-layer-converter';
 import type { Layer } from '@/types';
 
 export interface ServerHtmlImportResult {
@@ -19,6 +19,10 @@ export interface ServerHtmlImportResult {
   refs: Record<string, string>;
   /** Elements marked `data-ycode-component="Name"`, in document order */
   componentMarks: HtmlComponentMark[];
+  /** Elements annotated with data-ycode-collection / -field / -link / -toggle / -menu, in document order */
+  ycodeMarks: HtmlYcodeMark[];
+  /** Site links (`#id`, `/path`, `/path#id`) the converter could not resolve to a layer or page itself */
+  unresolvedLinks: HtmlUnresolvedLink[];
 }
 
 export interface ServerHtmlImportOptions {
@@ -38,12 +42,16 @@ export function htmlToLayersOnServer(html: string, options: ServerHtmlImportOpti
   const warnings: HtmlImportWarning[] = [];
   const refs: Record<string, string> = {};
   const componentMarks: HtmlComponentMark[] = [];
+  const ycodeMarks: HtmlYcodeMark[] = [];
+  const unresolvedLinks: HtmlUnresolvedLink[] = [];
   const layers = documentToLayers(document as unknown as Document, {
     warnings,
     refs,
     componentMarks,
+    ycodeMarks,
+    unresolvedLinks,
     tailwindV4: true,
     anchorIds: options.anchorIds,
   });
-  return { layers, warnings, refs, componentMarks };
+  return { layers, warnings, refs, componentMarks, ycodeMarks, unresolvedLinks };
 }

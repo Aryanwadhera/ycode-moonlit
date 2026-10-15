@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { applyDesignToLayer } from './utils';
+import { classesToDesign } from '../tailwind-class-mapper';
 import type { Layer } from '../../types';
 
 const classList = (layer: Layer) =>
@@ -61,4 +62,47 @@ test('null design values remove the desktop class only', () => {
 
   assert.ok(!classes.includes('text-[14px]'));
   assert.ok(classes.includes('max-md:text-[12px]'));
+});
+
+test('transition easing accepts both "out" and "ease-out" and never doubles the prefix', () => {
+  const base: Layer = { id: 'btn', name: 'button', classes: '' };
+  const named = classList(applyDesignToLayer(base, {
+    transitions: { isActive: true, easing: 'ease-out', duration: '200ms' },
+  }));
+  assert.ok(named.includes('ease-out'), named.join(' '));
+  assert.ok(!named.some((cls) => cls.startsWith('ease-ease')));
+
+  const stored = classList(applyDesignToLayer(base, { transitions: { isActive: true, easing: 'in-out' } }));
+  assert.ok(stored.includes('ease-in-out'), stored.join(' '));
+
+  const custom = classList(applyDesignToLayer(base, {
+    transitions: { isActive: true, easing: 'cubic-bezier(0.4, 0, 0.2, 1)' },
+  }));
+  assert.ok(custom.includes('ease-[cubic-bezier(0.4,_0,_0.2,_1)]'), custom.join(' '));
+});
+
+test('filters and grid self-alignment become classes', () => {
+  const layer = applyDesignToLayer(
+    { id: 'img', name: 'image', classes: 'grayscale' },
+    {
+      effects: { isActive: true, filter: 'grayscale(1) brightness(0.5)', backdropFilter: 'saturate(180%)' },
+      layout: { isActive: true, justifySelf: 'end' },
+    },
+    'desktop',
+    'neutral',
+  );
+  const classes = String(layer.classes).split(' ');
+  assert.ok(classes.includes('filter-[grayscale(1)_brightness(0.5)]'));
+  assert.ok(classes.includes('backdrop-filter-[saturate(180%)]'));
+  assert.ok(classes.includes('justify-self-end'));
+  // The new filter replaces the named utility instead of stacking on it.
+  assert.ok(!classes.includes('grayscale'));
+});
+
+test('named filter utilities are read back into one filter value', () => {
+  const design = classesToDesign('grayscale brightness-75 -hue-rotate-15 backdrop-saturate-150 backdrop-blur-md opacity-50 justify-items-center');
+  assert.equal(design?.effects?.filter, 'grayscale(100%) brightness(0.75) hue-rotate(-15deg)');
+  assert.equal(design?.effects?.backdropFilter, 'saturate(1.5)');
+  assert.equal(design?.effects?.backdropBlur, 'md');
+  assert.equal(design?.layout?.justifyItems, 'center');
 });

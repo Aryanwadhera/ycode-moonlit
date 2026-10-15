@@ -4,6 +4,7 @@
  * - mobile-first breakpoints (md:, lg:) → Ycode's desktop-first max-lg: / max-md:
  * - v4 gradients (bg-linear-to-* + from/via/to) → one bg-[linear-gradient(...)]
  * - inset-* and top/right/bottom/left scale values → top-[…] etc.
+ * - negative margins (-ml-3) → ml-[-0.75rem]
  *
  * Expects classes already normalized to v4 with named colors resolved to hex.
  */
@@ -69,6 +70,24 @@ export function normalizePositionClasses(classes: string[]): string[] {
   });
 }
 
+// ─── Negative margins ───
+
+const NEGATIVE_MARGIN_RE = /^-(m|mx|my|mt|mr|mb|ml)-(.+)$/;
+
+/**
+ * Rewrites Tailwind's negative-margin shorthand (-ml-3, -mt-[12px]) into the
+ * arbitrary form the spacing controls edit (ml-[-0.75rem], mt-[-12px]).
+ */
+export function normalizeNegativeMargins(classes: string[]): string[] {
+  return classes.map((cls) => {
+    const { variants, base } = splitVariants(cls);
+    const match = base.match(NEGATIVE_MARGIN_RE);
+    if (!match) return cls;
+    const resolved = positionValue(match[2], true);
+    return resolved === null ? cls : joinVariants(variants, `${match[1]}-[${resolved}]`);
+  });
+}
+
 // ─── Gradients ───
 
 const GRADIENT_DIRECTIONS: Record<string, string> = {
@@ -76,7 +95,7 @@ const GRADIENT_DIRECTIONS: Record<string, string> = {
   b: 'to_bottom', bl: 'to_bottom_left', l: 'to_left', tl: 'to_top_left',
 };
 const LINEAR_RE = /^bg-linear-(?:to-(t|tr|r|br|b|bl|l|tl)|(\d+))$/;
-const STOP_RE = /^(from|via|to)-\[([^\]]+)\]$/;
+const STOP_RE = /^(from|via|to)-(?:\[([^\]]+)\]|(transparent))$/;
 
 /**
  * Combines bg-linear-* with its from-/via-/to- color stops (per variant
@@ -100,7 +119,7 @@ export function convertGradientClasses(classes: string[]): string[] {
     }
     const stop = base.match(STOP_RE);
     if (stop) {
-      group.stops[stop[1]] = stop[2];
+      group.stops[stop[1]] = stop[2] ?? stop[3];
       group.stopIdx.push(i);
     }
   });
@@ -131,8 +150,10 @@ const CONVERTIBLE_STATES = new Set(['hover', 'focus', 'active', 'disabled', 'cur
 /**
  * Class reproducing the browser default for a property, used as the mobile
  * value when a breakpoint class has no un-prefixed counterpart (md:col-span-2
- * alone means "1 column below md"). Inherited properties (font, color) are
- * absent on purpose: their default is the parent's value, not a constant.
+ * alone means "1 column below md"). Inherited properties (font size/weight,
+ * line height, letter spacing, color, text transform) are absent on purpose:
+ * their default is the parent's value, not a constant, so a breakpoint-only
+ * class for them stays as written and is reported.
  */
 const MOBILE_DEFAULTS: Record<string, string> = {
   flexDirection: 'flex-row',
@@ -170,6 +191,33 @@ const MOBILE_DEFAULTS: Record<string, string> = {
   right: 'right-[auto]',
   bottom: 'bottom-[auto]',
   left: 'left-[auto]',
+  justifyItems: 'justify-items-stretch',
+  justifySelf: 'justify-self-auto',
+  flex: 'flex-initial',
+  flexGrow: 'grow-0',
+  flexShrink: 'shrink',
+  gridTemplateRows: 'grid-rows-none',
+  minWidth: 'min-w-auto',
+  minHeight: 'min-h-auto',
+  maxHeight: 'max-h-none',
+  aspectRatio: 'aspect-auto',
+  objectFit: 'object-fill',
+  overflow: 'overflow-visible',
+  zIndex: 'z-auto',
+  borderRadius: 'rounded-none',
+  borderWidth: 'border-0',
+  backgroundColor: 'bg-transparent',
+  boxShadow: 'shadow-none',
+  opacity: 'opacity-100',
+  blur: 'blur-none',
+  backdropBlur: 'backdrop-blur-none',
+  filter: 'filter-none',
+  backdropFilter: 'backdrop-filter-none',
+  textDecoration: 'no-underline',
+  scale: 'scale-100',
+  rotate: 'rotate-0',
+  translateX: 'translate-x-0',
+  translateY: 'translate-y-0',
 };
 
 interface ResponsiveGroup {

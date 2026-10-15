@@ -7,10 +7,18 @@ import type {
 } from '@/types';
 import { getCollectionById } from '@/lib/repositories/collectionRepository';
 import { getFieldsByCollectionId } from '@/lib/repositories/collectionFieldRepository';
-import { getPageById } from '@/lib/repositories/pageRepository';
 import { getCachedDraft, saveCachedLayers } from '@/lib/mcp/page-layers';
-import { applyBackgroundImageDesign, findLayerById, updateLayerById } from '@/lib/mcp/utils';
-import { findParentCollectionLayer } from '@/lib/layer-utils';
+import { findLayerById, updateLayerById } from '@/lib/mcp/utils';
+import { getPageById } from '@/lib/repositories/pageRepository';
+import { canConvertToCollection, findParentCollectionLayer } from '@/lib/layer-utils';
+import {
+  BINDABLE_TEXT_LAYER_NAMES,
+  bindLayerToField,
+  buildFieldData,
+  dynamicVariableNode,
+  paragraphDoc,
+  resolveBindingContext,
+} from '@/lib/mcp/field-binding';
 import {
   fieldConditionSchema,
   itemIdConditionSchema,
@@ -18,106 +26,39 @@ import {
   buildConditionGroups,
 } from './visibility-conditions';
 
-/** A field variable's data payload — binds a layer's content to a CMS field. */
-function buildFieldData(
-  field: CollectionField,
-  source: 'collection' | 'page',
-  collectionLayerId: string | undefined,
-  format: string | undefined,
-) {
-  return {
-    field_id: field.id,
-    field_type: field.type,
-    relationships: [] as string[],
-    source,
-    ...(collectionLayerId ? { collection_layer_id: collectionLayerId } : {}),
-    ...(format ? { format } : {}),
-  };
-}
-
-/** Wrap a field variable in the `<ycode-inline-variable>` tag used in dynamic-text strings. */
-function inlineVariableTag(fieldData: ReturnType<typeof buildFieldData>): string {
-  return `<ycode-inline-variable>${JSON.stringify({ type: 'field', data: fieldData })}</ycode-inline-variable>`;
-}
-
-/** A single Tiptap inline node representing a bound field. */
-function dynamicVariableNode(fieldData: ReturnType<typeof buildFieldData>, label: string) {
-  return { type: 'dynamicVariable', attrs: { variable: { type: 'field', data: fieldData }, label } };
-}
-
-/** Wrap inline nodes in a single-paragraph Tiptap doc. */
-function paragraphDoc(content: Record<string, unknown>[]) {
-  return { type: 'doc', content: [{ type: 'paragraph', content }] };
-}
-
-/** Build a Tiptap rich-text doc that renders optional prefix/suffix around a bound field. */
-function buildBoundTextDoc(
-  fieldData: ReturnType<typeof buildFieldData>,
-  label: string,
-  prefix?: string,
-  suffix?: string,
-) {
-  const content: Record<string, unknown>[] = [];
-  if (prefix) content.push({ type: 'text', text: prefix });
-  content.push(dynamicVariableNode(fieldData, label));
-  if (suffix) content.push({ type: 'text', text: suffix });
-  return paragraphDoc(content);
-}
-
-/**
- * Resolve the collection a binding should pull from: the nearest ancestor
- * Collection List (source "collection") or the dynamic page's own collection
- * (source "page"). Returns the collection id plus, for the collection source,
- * the ancestor list layer id stamped onto the FieldVariable.
- */
-async function resolveBindingContext(
-  layers: Layer[],
-  layerId: string,
-  pageId: string,
-  source: 'collection' | 'page',
-): Promise<{ collectionId: string; collectionLayerId?: string } | { error: string }> {
-  if (source === 'collection') {
-    const parent = findParentCollectionLayer(layers, layerId);
-    if (!parent) {
-      return { error: 'Layer is not inside a Collection List. Place it inside a bound "collection" element, or use source "page".' };
-    }
-    const collectionId = parent.variables?.collection?.id;
-    if (!collectionId) {
-      return { error: 'The ancestor Collection List is not bound yet. Call bind_collection_layer first.' };
-    }
-    return { collectionId, collectionLayerId: parent.id };
-  }
-
-  const page = await getPageById(pageId);
-  const collectionId = page?.settings?.cms?.collection_id;
-  if (!collectionId) {
-    return { error: 'This page is not a dynamic CMS page. Bind it to a collection (update_page_settings.cms) or use source "collection".' };
-  }
-  return { collectionId };
-}
-
 /**
  * Find a collection-list layer (a layer carrying a `collection` variable). Such
  * layers render as `div` but repeat their children for each item in the bound
  * collection — they're created via add_layer template "collection".
  */
-function findCollectionLayer(layers: Layer[], layerId: string):
+function findCollectionLayer(layers: Layer[], layerId: string, convert = false):
   | { layer: Layer; collection: CollectionVariable }
   | { error: string } {
   const layer = findLayerById(layers, layerId);
   if (!layer) return { error: `Layer "${layerId}" not found.` };
   const collection = layer.variables?.collection;
-  if (!collection) {
-    return { error: `Layer "${layerId}" is not a Collection List. Add one with add_layer template "collection", then bind it.` };
+  if (collection) return { layer, collection };
+  if (convert) {
+    if (!canConvertToCollection(layer)) {
+      return { error: `Layer "${layerId}" (${layer.name}) cannot become a Collection List — use a plain container div.` };
+    }
+    return { layer, collection: { id: '' } };
   }
-  return { layer, collection };
+  return { error: `Layer "${layerId}" is not a Collection List. Add one with add_layer template "collection", or pass convert: true to turn this container into one in place.` };
 }
 
 export function registerCollectionLayerTools(server: McpServer) {
   server.tool(
     'bind_collection_layer',
     `Bind a Collection List element (add_layer template "collection") to a CMS collection so it
-repeats its children for each item. Also sets sorting, an optional item limit, and pagination.
+is repeated once per item. Also sets sorting, an optional item limit, and pagination.
+
+THE COLLECTION LAYER IS THE REPEATED ITEM, NOT THE LIST CONTAINER: the layer itself (with its
+classes) is cloned per item along with its children. Keep the list layout (display grid,
+gridTemplateColumns, gap, dividers) on its PARENT div and only card styling (padding,
+background, border, radius) on the collection layer — a grid on the collection layer renders
+one grid per item. Pass convert: true to turn an existing plain div (e.g. an imported card)
+into the Collection List in place; move the other static copies out or delete them.
 
 Changing the bound collection clears any existing filters on the layer, since they reference the
 previous collection's fields. After binding, use set_collection_filters to filter the items.
@@ -153,15 +94,17 @@ visitors control sorting at runtime.`,
         .describe('Where the source field lives: "collection" (ancestor list item) or "page" (dynamic page item). Omit for inverse_reference.'),
       sort_by_input_layer_id: z.string().nullable().optional().describe('Link sort_by to a filter input layer (null clears).'),
       sort_order_input_layer_id: z.string().nullable().optional().describe('Link sort_order to a filter input layer (null clears).'),
+      convert: z.boolean().optional()
+        .describe('When layer_id is a plain container (e.g. one imported card), convert it into the Collection List in place instead of failing.'),
     },
-    async ({ page_id, layer_id, collection_id, sort_by, sort_order, limit, pagination, source_field_id, source_field_type, source_field_source, sort_by_input_layer_id, sort_order_input_layer_id }) => {
+    async ({ page_id, layer_id, collection_id, sort_by, sort_order, limit, pagination, source_field_id, source_field_type, source_field_source, sort_by_input_layer_id, sort_order_input_layer_id, convert }) => {
       const pageLayers = await getCachedDraft(page_id);
       if (!pageLayers) {
         return { content: [{ type: 'text' as const, text: `Error: Page "${page_id}" has no layers.` }], isError: true };
       }
 
       const layers = pageLayers.layers as Layer[];
-      const found = findCollectionLayer(layers, layer_id);
+      const found = findCollectionLayer(layers, layer_id, convert);
       if ('error' in found) {
         return { content: [{ type: 'text' as const, text: `Error: ${found.error}` }], isError: true };
       }
@@ -335,13 +278,18 @@ WHAT GETS BOUND (by layer type):
 - text / heading / richText → the text content (optionally wrapped with prefix/suffix, e.g. "By " + Author)
 - image → the image src (or target "alt" for alt text)
 - video / audio → the media src (video also supports target "poster")
+- button / a / any linked layer → the link href, from a link, email or phone field
 - any layer with target "background" → the background image
 
 The field must exist in the relevant collection: for source "collection" that's the collection bound to
 the nearest ancestor Collection List; for source "page" it's the dynamic page's collection.
 
 TIP: To link a card to the item's own dynamic page, use update_layer_link with link_type "page",
-page_id_target = the dynamic page, and NO collection_item_id (it resolves to the current item).`,
+page_id_target = the dynamic page, and collection_item_id "current-collection" (the default when
+the layer is inside a list of that collection).
+
+Binding many layers (a whole card, several lists)? Use the bind_field / bind_collection ops in
+one batch_operations call instead of one call per field.`,
     {
       page_id: z.string().describe('The page ID'),
       layer_id: z.string().describe('The layer whose content to bind'),
@@ -366,80 +314,13 @@ page_id_target = the dynamic page, and NO collection_item_id (it resolves to the
         return { content: [{ type: 'text' as const, text: `Error: Layer "${layer_id}" not found.` }], isError: true };
       }
 
-      // Resolve which collection the field must belong to, plus the FieldVariable source metadata.
-      const ctx = await resolveBindingContext(layers, layer_id, page_id, source);
-      if ('error' in ctx) {
-        return { content: [{ type: 'text' as const, text: `Error: ${ctx.error}` }], isError: true };
+      const bound = await bindLayerToField(layers, layer, page_id, { field_id, source, target, format, prefix, suffix });
+      if ('error' in bound) {
+        return { content: [{ type: 'text' as const, text: `Error: ${bound.error}` }], isError: true };
       }
-      const { collectionId, collectionLayerId } = ctx;
+      const { summary } = bound;
 
-      const fields = await getFieldsByCollectionId(collectionId);
-      const field = fields.find((f) => f.id === field_id);
-      if (!field) {
-        return { content: [{ type: 'text' as const, text: `Error: Field "${field_id}" not found in the ${source === 'page' ? 'page' : 'list'} collection.` }], isError: true };
-      }
-
-      const fieldData = buildFieldData(field, source, collectionLayerId, format);
-      const isText = layer.name === 'text' || layer.name === 'richText';
-
-      let nextVariables: Layer['variables'];
-      let summary: string;
-
-      if (target === 'background') {
-        nextVariables = { ...layer.variables, backgroundImage: { src: { type: 'field', data: fieldData } } };
-        summary = `background image → "${field.name}"`;
-      } else if (isText && (target === 'auto' || target === 'src')) {
-        nextVariables = {
-          ...layer.variables,
-          text: { type: 'dynamic_rich_text', data: { content: buildBoundTextDoc(fieldData, field.name, prefix, suffix) } },
-        };
-        summary = `text → "${field.name}"`;
-      } else if (layer.name === 'image') {
-        const existing = layer.variables?.image;
-        if (target === 'alt') {
-          nextVariables = {
-            ...layer.variables,
-            image: {
-              src: existing?.src ?? { type: 'asset', data: { asset_id: null } },
-              alt: { type: 'dynamic_text', data: { content: `${prefix ?? ''}${inlineVariableTag(fieldData)}${suffix ?? ''}` } },
-            },
-          };
-          summary = `image alt → "${field.name}"`;
-        } else {
-          nextVariables = {
-            ...layer.variables,
-            image: {
-              src: { type: 'field', data: fieldData },
-              alt: existing?.alt ?? { type: 'dynamic_text', data: { content: '' } },
-            },
-          };
-          summary = `image src → "${field.name}"`;
-        }
-      } else if (layer.name === 'video') {
-        const existing = layer.variables?.video;
-        if (target === 'poster') {
-          nextVariables = { ...layer.variables, video: { ...existing, poster: { type: 'field', data: fieldData } } };
-          summary = `video poster → "${field.name}"`;
-        } else {
-          nextVariables = { ...layer.variables, video: { ...existing, src: { type: 'field', data: fieldData } } };
-          summary = `video src → "${field.name}"`;
-        }
-      } else if (layer.name === 'audio') {
-        nextVariables = { ...layer.variables, audio: { ...layer.variables?.audio, src: { type: 'field', data: fieldData } } };
-        summary = `audio src → "${field.name}"`;
-      } else {
-        return {
-          content: [{ type: 'text' as const, text: `Error: Layer "${layer.customName || layer.name}" (${layer.name}) cannot bind a "${target}" field. Use a text, image, video, or audio layer, or target "background".` }],
-          isError: true,
-        };
-      }
-
-      const updated = updateLayerById(layers, layer_id, (l) => {
-        const next = { ...l, variables: nextVariables };
-        // Background bindings also need the design/classes that render the
-        // --bg-img variable, otherwise the bound image never displays.
-        return target === 'background' ? applyBackgroundImageDesign(next) : next;
-      });
+      const updated = updateLayerById(layers, layer_id, () => bound.layer);
       await saveCachedLayers(page_id, updated);
 
       return {
@@ -484,7 +365,7 @@ or on a dynamic CMS page (source "page").`,
       if (!layer) {
         return { content: [{ type: 'text' as const, text: `Error: Layer "${layer_id}" not found.` }], isError: true };
       }
-      if (layer.name !== 'text' && layer.name !== 'richText') {
+      if (!BINDABLE_TEXT_LAYER_NAMES.has(layer.name)) {
         return { content: [{ type: 'text' as const, text: `Error: Layer "${layer.customName || layer.name}" (${layer.name}) is not a text layer.` }], isError: true };
       }
 

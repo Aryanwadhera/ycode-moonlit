@@ -2,6 +2,8 @@ import { readFile } from 'fs/promises';
 import { join } from 'path';
 
 import { broadcastFontsChanged } from '@/lib/mcp/broadcast';
+import { designIssue } from '@/lib/mcp/design-lint';
+import type { DesignIssue } from '@/lib/mcp/design-lint';
 import { createFont, getAllFonts } from '@/lib/repositories/fontRepository';
 
 /**
@@ -123,8 +125,8 @@ export async function ensureFontsInstalled(families: Set<string>): Promise<Ensur
 }
 
 /** Warning strings for the tool result, mirroring the design linter's tone. */
-export function fontWarnings(result: EnsureFontsResult): string[] {
-  return result.unknown.map((family) =>
+export function fontWarnings(result: EnsureFontsResult): DesignIssue[] {
+  return result.unknown.map((family) => designIssue('error',
     `Font "${family}" is not installed and was not found in the Google Fonts catalog — text using it will render with a fallback font. Use search_google_fonts to find the correct family name, or pick an installed font (list_fonts).`,
-  );
+  ));
 }

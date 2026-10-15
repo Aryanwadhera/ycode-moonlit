@@ -747,11 +747,14 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
     const previousItems = get().items[collectionId] || [];
     const previousItem = previousItems.find(item => item.id === itemId);
 
-    // Optimistically set status to "Published · Edited" if the item is currently published
     const collectionFields = get().fields[collectionId] || [];
+    const updatedAtFieldId = collectionFields.find(f => f.key === 'updated_at')?.id;
+    const hasValueChange = hasCollectionValueChanges(values, previousItem?.values ?? {}, updatedAtFieldId);
+
+    // Optimistically set status to "Published · Edited" if the item is currently published
     const statusFieldId = findStatusFieldId(collectionFields);
     const optimisticStatus: Record<string, string> = {};
-    if (statusFieldId && previousItem) {
+    if (statusFieldId && previousItem && hasValueChange) {
       try {
         const current = JSON.parse(previousItem.values[statusFieldId] || '{}');
         if (current.is_published) {
@@ -763,8 +766,6 @@ export const useCollectionsStore = create<CollectionsStore>((set, get) => ({
     // Optimistically bump the virtual `updated_at` field to mirror the
     // server-side auto-bump in setValuesByFieldName, which skips no-op saves.
     const now = new Date().toISOString();
-    const updatedAtFieldId = collectionFields.find(f => f.key === 'updated_at')?.id;
-    const hasValueChange = hasCollectionValueChanges(values, previousItem?.values ?? {}, updatedAtFieldId);
     const optimisticTimestamps: Record<string, string> = {};
     if (updatedAtFieldId && !(updatedAtFieldId in values) && hasValueChange) {
       optimisticTimestamps[updatedAtFieldId] = now;

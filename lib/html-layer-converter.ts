@@ -16,7 +16,7 @@ import { escapeHtml } from '@/lib/escape-html';
 import { generateLinkHref, isValidLinkSettings } from '@/lib/link-utils';
 import type { LinkResolutionContext } from '@/lib/link-utils';
 import { normalizeV3ToV4, resolveNamedColors } from '@/lib/tailwind-normalizer';
-import { convertGradientClasses, convertMobileFirstClasses, normalizePositionClasses } from '@/lib/html-import-classes';
+import { convertGradientClasses, convertMobileFirstClasses, normalizeNegativeMargins, normalizePositionClasses } from '@/lib/html-import-classes';
 import { cssToClasses } from '@/lib/import/css';
 
 // Numeric node types instead of the `Node` global, which server-side DOMs don't define.
@@ -24,8 +24,17 @@ const ELEMENT_NODE = 1;
 const TEXT_NODE = 3;
 
 /** Something the import dropped or could not convert faithfully. */
+/**
+ * error — content was lost or a binding did not take effect.
+ * warning — something was converted or approximated and may need a follow-up.
+ * hint — the markup renders as written but has no control in the design panel.
+ */
+export type HtmlImportSeverity = 'error' | 'warning' | 'hint';
+
 export interface HtmlImportWarning {
   message: string;
+  /** Defaults to "warning" when a producer doesn't say. */
+  severity?: HtmlImportSeverity;
   /** Element path in the source HTML, e.g. `section[1] > div[2] > img[1]` */
   path: string;
   /** Created layer the warning applies to, when one exists */
@@ -45,10 +54,23 @@ export interface HtmlImportOptions {
   /** Html ids already on the target page, so `href="#id"` links to them become native anchors. */
   anchorIds?: Iterable<string>;
   /**
+   * Receives anchor links the converter could not resolve locally (`#id` with
+   * no such element here or on the page, and any `/path#id`), so the caller can
+   * point them at the page that holds the id. Without it they stay URLs and are
+   * reported as warnings.
+   */
+  unresolvedLinks?: HtmlUnresolvedLink[];
+  /**
    * Receives every element marked `data-ycode-component="Name"`, in document
    * order. Without it the attribute is dropped with a warning.
    */
   componentMarks?: HtmlComponentMark[];
+  /**
+   * Receives every CMS / interaction annotation (`data-ycode-collection`,
+   * `data-ycode-field`, `data-ycode-link`, `data-ycode-toggle`, `data-ycode-menu`),
+   * in document order. Without it the attributes are dropped with a warning.
+   */
+  ycodeMarks?: HtmlYcodeMark[];
 }
 
 export interface HtmlComponentMark {
@@ -57,10 +79,55 @@ export interface HtmlComponentMark {
   path: string;
 }
 
-interface PendingAnchor {
-  layer: Layer;
-  anchorId: string;
+/** An element annotated with one of the `data-ycode-*` import attributes. */
+export type HtmlYcodeMark =
+  | { kind: 'collection'; layerId: string; path: string; collection: string; limit?: number; sort?: string; filter?: string }
+  | { kind: 'field'; layerId: string; path: string; field: string; target: 'auto' | 'alt' | 'background' }
+  | { kind: 'item-link'; layerId: string; path: string }
+  | { kind: 'toggle'; layerId: string; path: string; name: string }
+  | { kind: 'menu'; layerId: string; path: string; name: string };
+
+/**
+ * A site-internal link (`#id`, `/path`, `/path#id`) that the converter could not
+ * resolve by itself: the anchor id isn't in the imported HTML or on the target
+ * page, or the href names another page. At least one of `anchorId` / `pagePath`
+ * is set.
+ */
+export interface HtmlUnresolvedLink {
+  layerId: string;
+  /** The `id` after `#`, when the href has one. */
+  anchorId?: string;
+  /** Element path in the source HTML. */
   path: string;
+  /** Site path for `/path`, `/path#id` and `/#id` hrefs; absent for plain `#id`. */
+  pagePath?: string;
+}
+
+export interface ParsedSiteHref {
+  anchorId?: string;
+  pagePath?: string;
+}
+
+interface PendingAnchor extends ParsedSiteHref {
+  layer: Layer;
+  path: string;
+}
+
+/**
+ * Splits site-internal hrefs: `#id`, `/`, `/path`, `/path#id`. Returns null for
+ * anything that should stay a plain URL — external and protocol-relative URLs,
+ * `#` alone, query strings, and paths to files (`/sitemap.xml`).
+ */
+export function parseSiteHref(href: string): ParsedSiteHref | null {
+  const hash = href.indexOf('#');
+  const before = hash === -1 ? href : href.slice(0, hash);
+  const anchorId = hash === -1 ? undefined : href.slice(hash + 1);
+  if (anchorId === '') return null;
+  if (before === '') return anchorId === undefined ? null : { anchorId };
+  if (!before.startsWith('/') || before.startsWith('//') || before.includes('?')) return null;
+  const pagePath = before.length > 1 ? before.replace(/\/+$/, '') : '/';
+  if (/\.[a-z0-9]+$/i.test(pagePath)) return null;
+  return anchorId === undefined ? { pagePath } : { anchorId, pagePath };
 }
 
 interface ImportContext {
@@ -72,11 +139,13 @@ interface ImportContext {
   tagRefCounts: Record<string, number>;
   htmlIds: Set<string>;
   pendingAnchors: PendingAnchor[];
+  unresolvedLinks: HtmlUnresolvedLink[] | null;
   componentMarks: HtmlComponentMark[] | null;
+  ycodeMarks: HtmlYcodeMark[] | null;
 }
 
-function warn(ctx: ImportContext, path: string, message: string, layerId?: string): void {
-  ctx.warnings?.push({ message, path, ...(layerId ? { layerId } : {}) });
+function warn(ctx: ImportContext, path: string, message: string, layerId?: string, severity: HtmlImportSeverity = 'warning'): void {
+  ctx.warnings?.push({ message, severity, path, ...(layerId ? { layerId } : {}) });
 }
 
 /** Returns the URL only if it's absolute, otherwise undefined (relative paths become placeholders). */
@@ -354,9 +423,12 @@ function collectInlineNodes(node: Node, marks: TiptapMark[], ctx: ImportContext,
 function warnInlineAttributes(el: Element, tag: string, ctx: ImportContext, path: string): void {
   if (!ctx.warnings) return;
   const kept = tag === 'a' ? LINK_ATTRS : [];
-  const dropped = Array.from(el.attributes)
-    .map((attr) => attr.name)
-    .filter((name) => !kept.includes(name));
+  const names = Array.from(el.attributes).map((attr) => attr.name);
+  const marks = names.filter((name) => YCODE_ATTRIBUTES.has(name));
+  if (marks.length > 0) {
+    warn(ctx, `${path} > ${tag}`, `${marks.join(', ')} on an inline <${tag}> inside running text was ignored — rich text has no per-word bindings. Put the attribute on the block element, or bind mixed text afterwards with set_dynamic_text`, 'error');
+  }
+  const dropped = names.filter((name) => !kept.includes(name) && !YCODE_ATTRIBUTES.has(name));
   if (dropped.length > 0) {
     warn(ctx, `${path} > ${tag}`, `Inline <${tag}> inside text lost its ${dropped.join(', ')} (rich text keeps only text, bold/italic/underline/strike/code/sub/sup marks, and links)`);
   }
@@ -408,7 +480,7 @@ function keepsInlineChildrenAsLayers(el: Element): boolean {
       const child = node as Element;
       if (child.tagName.toLowerCase() === 'br') continue;
       hasElementChild = true;
-      if (child.getAttribute('class')?.trim() || child.getAttribute('style')?.trim() || child.getAttribute('id')) {
+      if (child.getAttribute('class')?.trim() || child.getAttribute('style')?.trim() || child.getAttribute('id') || hasYcodeMark(child)) {
         hasStyledChild = true;
       }
     }
@@ -483,13 +555,13 @@ function resolveImportClasses(el: Element, ctx: ImportContext, path: string, lay
   const merged = [...htmlClasses, ...inlineClasses];
   const normalized = normalizeV3ToV4(merged, { rescaleSizes: ctx.rescaleSizes });
   const named = resolveNamedColors(normalized);
-  const withGradients = convertGradientClasses(normalizePositionClasses(named));
+  const withGradients = convertGradientClasses(normalizeNegativeMargins(normalizePositionClasses(named)));
   const { classes: resolved, approximated } = convertMobileFirstClasses(withGradients, defaultDisplayOf(el));
 
   if (ctx.warnings) {
     warnDroppedStyles(styleAttr, ctx, path, layerId);
     for (const cls of approximated) {
-      warn(ctx, path, `"${cls}" was approximated: Ycode's mobile breakpoint covers everything below 768px, so mobile uses the unprefixed value`, layerId);
+      warn(ctx, path, `"${cls}" was approximated: Ycode's mobile breakpoint covers everything below 768px, so mobile uses the unprefixed value`, layerId, 'hint');
     }
     for (const cls of resolved) warnClass(cls, ctx, path, layerId);
   }
@@ -523,7 +595,7 @@ function warnClass(cls: string, ctx: ImportContext, path: string, layerId: strin
 
   const mobileFirst = variants.find((v) => MOBILE_FIRST_BREAKPOINTS.has(v));
   if (mobileFirst) {
-    warn(ctx, path, `Mobile-first prefix "${mobileFirst}:" (in "${cls}") renders, but couldn't be converted to Ycode's desktop-first breakpoints (no unprefixed value for the same property, or xl:/2xl:), so it can't be edited per breakpoint. Use unprefixed classes for desktop, "max-lg:" for tablet and "max-md:" for mobile`, layerId);
+    warn(ctx, path, `Mobile-first prefix "${mobileFirst}:" (in "${cls}") renders, but couldn't be converted to Ycode's desktop-first breakpoints (no unprefixed value for the same property, or xl:/2xl:), so it can't be edited per breakpoint. Use unprefixed classes for desktop, "max-lg:" for tablet and "max-md:" for mobile`, layerId, 'hint');
     return;
   }
 
@@ -534,12 +606,12 @@ function warnClass(cls: string, ctx: ImportContext, path: string, layerId: strin
     && breakpoints.length + states.length === variants.length
     && (breakpoints.length === 0 || variants[0] === breakpoints[0]);
   if (!isEditableVariant) {
-    warn(ctx, path, `Variant "${prefix}" (in "${cls}") renders, but has no control in the design panel`, layerId);
+    warn(ctx, path, `Variant "${prefix}" (in "${cls}") renders, but has no control in the design panel`, layerId, 'hint');
     return;
   }
 
   if (getAffectedProperties(base).length === 0 && !SILENT_RAW_CLASSES.has(base)) {
-    warn(ctx, path, `Class "${base}" renders, but has no control in the design panel (editable only as a raw class)`, layerId);
+    warn(ctx, path, `Class "${base}" renders, but has no control in the design panel (editable only as a raw class)`, layerId, 'hint');
   }
 }
 
@@ -581,18 +653,33 @@ const LOSSY_TAGS = new Set([
 
 const LINK_ATTRS = ['href', 'target', 'rel'];
 
-/** Attributes each tag maps into the layer (besides class/style/id). */
+/** Boolean form attributes stored as `true` on the layer (the editor's input settings toggle them). */
+const BOOLEAN_FIELD_ATTRS = ['required', 'disabled', 'checked', 'readonly', 'multiple'];
+/** Valued form attributes copied verbatim onto input / textarea / select layers. */
+const FIELD_ATTRS = ['name', 'placeholder', 'autocomplete', 'value', 'min', 'max', 'step', 'minlength', 'maxlength', 'pattern', 'inputmode'];
+
+/** Attributes each tag maps into the layer (besides class/style/id and the accessibility set). */
 const IMPORTED_ATTRS: Record<string, string[]> = {
   a: LINK_ATTRS,
   img: ['src', 'alt', 'width', 'height'],
-  input: ['type', 'placeholder', 'name'],
-  textarea: ['placeholder', 'name', 'rows'],
-  select: ['name'],
-  form: ['action', 'method'],
+  button: ['type', 'disabled'],
+  input: ['type', ...FIELD_ATTRS, ...BOOLEAN_FIELD_ATTRS],
+  textarea: ['rows', ...FIELD_ATTRS, ...BOOLEAN_FIELD_ATTRS],
+  select: [...FIELD_ATTRS, ...BOOLEAN_FIELD_ATTRS],
+  option: ['value', 'selected', 'disabled'],
+  form: ['action', 'method', 'name'],
   iframe: ['src'],
   video: ['src', 'controls', 'loop', 'muted', 'autoplay'],
   audio: ['src', 'controls', 'loop', 'muted', 'autoplay'],
 };
+
+/**
+ * Accessibility / semantics attributes kept on every element as custom
+ * attributes (editable in the settings panel): aria-*, role, title, tabindex.
+ */
+function isAccessibilityAttribute(name: string): boolean {
+  return name.startsWith('aria-') || name === 'role' || name === 'title' || name === 'tabindex';
+}
 
 /** Tags converted before the `id` attribute is read. */
 const ID_DROPPING_TAGS = new Set(['img', 'input', 'textarea', 'select', 'iframe', 'video', 'audio']);
@@ -602,23 +689,126 @@ function warnDroppedAttributes(el: Element, tag: string, ctx: ImportContext, pat
   const imported = IMPORTED_ATTRS[tag] || [];
   const dropped = Array.from(el.attributes)
     .map((attr) => attr.name)
-    .filter((name) => name !== 'class' && name !== 'style' && name !== 'data-ref' && name !== COMPONENT_ATTRIBUTE && !imported.includes(name)
+    .filter((name) => name !== 'class' && name !== 'style' && name !== 'data-ref' && !YCODE_ATTRIBUTES.has(name) && !imported.includes(name)
+      && !isAccessibilityAttribute(name)
       && !(name === 'id' && !ID_DROPPING_TAGS.has(tag)));
   if (dropped.length > 0) {
     warn(ctx, path, `Attributes dropped from <${tag}>: ${dropped.join(', ')}`, layerId);
   }
 }
 
+/** Copies aria-*, role, title and tabindex into the layer's custom attributes. */
+function importAccessibilityAttributes(el: Element, layer: Layer): void {
+  const custom: Record<string, string> = {};
+  for (const attr of Array.from(el.attributes)) {
+    if (isAccessibilityAttribute(attr.name)) custom[attr.name] = attr.value;
+  }
+  if (Object.keys(custom).length === 0) return;
+  layer.settings = { ...layer.settings, customAttributes: { ...layer.settings?.customAttributes, ...custom } };
+}
+
+/** Reads the form-field attributes of an input / textarea / select into `layer.attributes`. */
+function importFieldAttributes(el: Element, layer: Layer): void {
+  const attrs: Record<string, string | boolean> = { ...layer.attributes };
+  for (const name of FIELD_ATTRS) {
+    const value = el.getAttribute(name);
+    if (value) attrs[name] = value;
+  }
+  for (const name of BOOLEAN_FIELD_ATTRS) {
+    if (el.hasAttribute(name)) attrs[name] = true;
+  }
+  layer.attributes = attrs;
+}
+
+/** Converts a <select>'s <option> children into the option layers the select element uses. */
+function optionsToLayers(select: Element): Layer[] {
+  return Array.from(select.querySelectorAll('option')).map((option) => {
+    const value = option.getAttribute('value') ?? option.textContent?.trim() ?? '';
+    const isPlaceholder = option.hasAttribute('disabled') && (value === '' || option.hasAttribute('hidden'));
+    const layer: Layer = {
+      id: generateId('lyr'),
+      name: 'option',
+      classes: '',
+      attributes: {
+        value,
+        ...(option.hasAttribute('selected') ? { selected: 'true' } : {}),
+        ...(option.hasAttribute('disabled') ? { disabled: 'true' } : {}),
+        ...(option.hasAttribute('hidden') ? { hidden: 'true' } : {}),
+      },
+      variables: {
+        text: { type: 'dynamic_text', data: { content: option.textContent?.trim() ?? '' } },
+      },
+    };
+    if (isPlaceholder) layer.settings = { isPlaceholder: true };
+    return layer;
+  });
+}
+
 function warnRelativeSrc(el: Element, tag: string, ctx: ImportContext, path: string, layerId: string, hint: string): void {
   const rawSrc = el.getAttribute('src');
   if (!rawSrc) {
-    warn(ctx, path, `<${tag}> has no src; ${hint}`, layerId);
+    warn(ctx, path, `<${tag}> has no src; ${hint}`, layerId, 'error');
   } else if (!resolveAbsoluteUrl(rawSrc)) {
-    warn(ctx, path, `<${tag}> src "${rawSrc}" is not an absolute URL and was dropped; ${hint}`, layerId);
+    warn(ctx, path, `<${tag}> src "${rawSrc}" is not an absolute URL and was dropped; ${hint}`, layerId, 'error');
   }
 }
 
 const COMPONENT_ATTRIBUTE = 'data-ycode-component';
+const COLLECTION_ATTRIBUTE = 'data-ycode-collection';
+const FIELD_ATTRIBUTE = 'data-ycode-field';
+const FIELD_ALT_ATTRIBUTE = 'data-ycode-field-alt';
+const FIELD_BG_ATTRIBUTE = 'data-ycode-field-bg';
+const ITEM_LINK_ATTRIBUTE = 'data-ycode-link';
+const TOGGLE_ATTRIBUTE = 'data-ycode-toggle';
+const MENU_ATTRIBUTE = 'data-ycode-menu';
+const PREVIEW_ONLY_ATTRIBUTES = ['data-ycode-preview-only', 'data-preview-only'];
+
+/** Import-only annotations: consumed by the importer, never kept on the layer or reported as dropped. */
+const YCODE_ATTRIBUTES = new Set([
+  COMPONENT_ATTRIBUTE, COLLECTION_ATTRIBUTE, 'data-ycode-limit', 'data-ycode-sort', 'data-ycode-filter',
+  FIELD_ATTRIBUTE, FIELD_ALT_ATTRIBUTE, FIELD_BG_ATTRIBUTE, ITEM_LINK_ATTRIBUTE, TOGGLE_ATTRIBUTE, MENU_ATTRIBUTE,
+  ...PREVIEW_ONLY_ATTRIBUTES,
+]);
+
+/** Whether an element carries any `data-ycode-*` annotation (such elements always stay their own layer). */
+function hasYcodeMark(el: Element): boolean {
+  return Array.from(el.attributes).some((attr) => attr.name !== COMPONENT_ATTRIBUTE && YCODE_ATTRIBUTES.has(attr.name));
+}
+
+/** Pushes the element's CMS / interaction annotations onto the context, or warns when the import can't use them. */
+function readYcodeMarks(el: Element, ctx: ImportContext, path: string, layerId: string): void {
+  const marks: HtmlYcodeMark[] = [];
+  const collection = el.getAttribute(COLLECTION_ATTRIBUTE)?.trim();
+  if (collection) {
+    const limitRaw = el.getAttribute('data-ycode-limit')?.trim();
+    const limit = limitRaw ? Number.parseInt(limitRaw, 10) : NaN;
+    const sort = el.getAttribute('data-ycode-sort')?.trim();
+    const filter = el.getAttribute('data-ycode-filter')?.trim();
+    marks.push({
+      kind: 'collection', layerId, path, collection,
+      ...(Number.isFinite(limit) && limit > 0 ? { limit } : {}),
+      ...(sort ? { sort } : {}),
+      ...(filter ? { filter } : {}),
+    });
+  }
+  const field = el.getAttribute(FIELD_ATTRIBUTE)?.trim();
+  if (field) marks.push({ kind: 'field', layerId, path, field, target: 'auto' });
+  const fieldAlt = el.getAttribute(FIELD_ALT_ATTRIBUTE)?.trim();
+  if (fieldAlt) marks.push({ kind: 'field', layerId, path, field: fieldAlt, target: 'alt' });
+  const fieldBg = el.getAttribute(FIELD_BG_ATTRIBUTE)?.trim();
+  if (fieldBg) marks.push({ kind: 'field', layerId, path, field: fieldBg, target: 'background' });
+  const itemLink = el.getAttribute(ITEM_LINK_ATTRIBUTE)?.trim();
+  if (itemLink !== undefined && itemLink !== null && el.hasAttribute(ITEM_LINK_ATTRIBUTE)) {
+    if (!itemLink || itemLink === 'item') marks.push({ kind: 'item-link', layerId, path });
+    else warn(ctx, path, `${ITEM_LINK_ATTRIBUTE}="${itemLink}" is not supported; use ${ITEM_LINK_ATTRIBUTE}="item"`, layerId, 'error');
+  }
+  if (el.hasAttribute(TOGGLE_ATTRIBUTE)) marks.push({ kind: 'toggle', layerId, path, name: el.getAttribute(TOGGLE_ATTRIBUTE)?.trim() || 'menu' });
+  if (el.hasAttribute(MENU_ATTRIBUTE)) marks.push({ kind: 'menu', layerId, path, name: el.getAttribute(MENU_ATTRIBUTE)?.trim() || 'menu' });
+
+  if (marks.length === 0) return;
+  if (ctx.ycodeMarks) ctx.ycodeMarks.push(...marks);
+  else warn(ctx, path, 'data-ycode-* annotations are only supported by the MCP import and were ignored', layerId);
+}
 
 /** Landmark tags that get a ref even without an id: first <header> → "header", second → "header[2]". */
 const TAG_REF_TAGS = new Set(['header', 'footer', 'nav', 'main', 'aside', 'section']);
@@ -643,16 +833,28 @@ function addRef(ctx: ImportContext, ref: string, layerId: string, path: string):
   ctx.refs[ref] = layerId;
 }
 
-/** Turns `href="#id"` links whose target exists into native anchor links. */
+/**
+ * Turns `href="#id"` links whose target exists here or on the page into native
+ * anchor links. Everything else (`#id` with no local target, `/path`, `/path#id`)
+ * is handed to `options.unresolvedLinks` for cross-page resolution; without that
+ * collector only the dangling `#id` case is reported.
+ */
 function resolvePendingAnchors(ctx: ImportContext, existingIds: Set<string>): void {
-  for (const { layer, anchorId, path } of ctx.pendingAnchors) {
+  for (const { layer, anchorId, path, pagePath } of ctx.pendingAnchors) {
     const link = layer.variables?.link;
     if (!link) continue;
-    if (ctx.htmlIds.has(anchorId) || existingIds.has(anchorId)) {
+    if (pagePath === undefined && anchorId !== undefined && (ctx.htmlIds.has(anchorId) || existingIds.has(anchorId))) {
       const anchorLink: LinkSettings = { ...link, type: 'url', anchor_layer_id: anchorId };
       delete anchorLink.url;
       layer.variables = { ...layer.variables, link: anchorLink };
-    } else {
+    } else if (ctx.unresolvedLinks) {
+      ctx.unresolvedLinks.push({
+        layerId: layer.id,
+        path,
+        ...(anchorId !== undefined ? { anchorId } : {}),
+        ...(pagePath !== undefined ? { pagePath } : {}),
+      });
+    } else if (pagePath === undefined) {
       warn(ctx, path, `Link "#${anchorId}" has no element with id "${anchorId}" in the import or on the page, so it was kept as a URL`, layer.id);
     }
   }
@@ -667,8 +869,14 @@ function elementToLayer(el: Element, ctx: ImportContext, path: string): Layer | 
     return null;
   }
 
+  // Static preview copies next to a data-ycode-collection item are design-time only.
+  if (ctx.ycodeMarks && PREVIEW_ONLY_ATTRIBUTES.some((attr) => el.hasAttribute(attr))) return null;
+
   const layerId = generateId('lyr');
-  const layerName = TAG_TO_LAYER_NAME[tag] || 'div';
+  // A <label> wrapping its control is a container, which the editor models as a
+  // div with the label tag (same shape as the native form templates).
+  const wrapsControl = tag === 'label' && el.querySelector('input, select, textarea') !== null;
+  const layerName = wrapsControl ? 'div' : (TAG_TO_LAYER_NAME[tag] || 'div');
   const classes = resolveImportClasses(el, ctx, path, layerId);
 
   const ref = el.getAttribute('data-ref')?.trim();
@@ -680,6 +888,7 @@ function elementToLayer(el: Element, ctx: ImportContext, path: string): Layer | 
     if (ctx.componentMarks) ctx.componentMarks.push({ name: componentName, layerId, path });
     else warn(ctx, path, `${COMPONENT_ATTRIBUTE} is only supported by the MCP import and was ignored`, layerId);
   }
+  readYcodeMarks(el, ctx, path, layerId);
 
   const rawDesign = classes ? classesToDesign(classes) : undefined;
   const design = cleanDesign(rawDesign);
@@ -692,16 +901,17 @@ function elementToLayer(el: Element, ctx: ImportContext, path: string): Layer | 
   };
 
   warnDroppedAttributes(el, tag, ctx, path, layerId);
+  if (tag !== 'svg') importAccessibilityAttributes(el, layer);
   if (!TAG_TO_LAYER_NAME[tag]) {
     warn(ctx, path, `Unknown tag <${tag}> was imported as a div`, layerId);
   } else if (LOSSY_TAGS.has(tag)) {
     warn(ctx, path, `<${tag}> was imported as a plain div and loses its native behavior`, layerId);
   }
 
-  if (HEADING_TAGS.has(tag)) {
-    layer.settings = { tag };
+  if (HEADING_TAGS.has(tag) || wrapsControl) {
+    layer.settings = { ...layer.settings, tag };
   } else if (SEMANTIC_TAG_OVERRIDE[tag]) {
-    layer.settings = { tag: SEMANTIC_TAG_OVERRIDE[tag] };
+    layer.settings = { ...layer.settings, tag: SEMANTIC_TAG_OVERRIDE[tag] };
   }
 
   if (TEXT_LAYER_NAMES.has(layerName)) {
@@ -721,9 +931,8 @@ function elementToLayer(el: Element, ctx: ImportContext, path: string): Layer | 
       if (target) linkSettings.target = target;
       if (rel) linkSettings.rel = rel;
       layer.variables = { ...layer.variables, link: linkSettings };
-      if (href.startsWith('#') && href.length > 1) {
-        ctx.pendingAnchors.push({ layer, anchorId: href.slice(1), path });
-      }
+      const anchor = parseSiteHref(href);
+      if (anchor) ctx.pendingAnchors.push({ layer, path, ...anchor });
     }
   }
 
@@ -756,50 +965,43 @@ function elementToLayer(el: Element, ctx: ImportContext, path: string): Layer | 
   }
 
   if (tag === 'input') {
-    const type = el.getAttribute('type') || 'text';
-    const placeholder = el.getAttribute('placeholder');
-    const name = el.getAttribute('name');
-    layer.attributes = {
-      ...layer.attributes,
-      type,
-      ...(placeholder ? { placeholder } : {}),
-      ...(name ? { name } : {}),
-    };
+    layer.attributes = { ...layer.attributes, type: el.getAttribute('type') || 'text' };
+    importFieldAttributes(el, layer);
     return layer;
   }
 
   if (tag === 'textarea') {
-    const placeholder = el.getAttribute('placeholder');
-    const name = el.getAttribute('name');
     const rows = el.getAttribute('rows');
-    layer.attributes = {
-      ...layer.attributes,
-      ...(placeholder ? { placeholder } : {}),
-      ...(name ? { name } : {}),
-      ...(rows ? { rows } : {}),
-    };
+    layer.attributes = { ...layer.attributes, ...(rows ? { rows } : {}) };
+    importFieldAttributes(el, layer);
     return layer;
   }
 
   if (tag === 'select') {
-    if (el.querySelector('option')) {
-      warn(ctx, path, '<select> options were not imported; set them with update_layer_settings', layerId);
-    }
-    const name = el.getAttribute('name');
+    importFieldAttributes(el, layer);
+    const options = optionsToLayers(el);
+    if (options.length > 0) layer.children = options;
+    return layer;
+  }
+
+  if (tag === 'button') {
+    const type = el.getAttribute('type');
     layer.attributes = {
       ...layer.attributes,
-      ...(name ? { name } : {}),
+      ...(type ? { type } : {}),
+      ...(el.hasAttribute('disabled') ? { disabled: true } : {}),
     };
-    return layer;
   }
 
   if (tag === 'form') {
     const action = el.getAttribute('action');
     const method = el.getAttribute('method');
+    const name = el.getAttribute('name');
     layer.attributes = {
       ...layer.attributes,
       ...(action ? { action } : {}),
       ...(method ? { method } : {}),
+      ...(name ? { name } : {}),
     };
   }
 
@@ -904,7 +1106,7 @@ function elementToLayer(el: Element, ctx: ImportContext, path: string): Layer | 
   const children = childNodesToLayers(el, ctx, path);
 
   if (children.length > 0 && isLeafLayer(layer)) {
-    warn(ctx, path, `<${tag}> contains block content, but its "${layerName}" layer can't have children in the editor; wrap the content in a div instead`, layerId);
+    warn(ctx, path, `<${tag}> contains block content, but its "${layerName}" layer can't have children in the editor; wrap the content in a div instead`, layerId, 'error');
   }
 
   if (isTextLayer && children.length === 0) {
@@ -960,7 +1162,9 @@ export function documentToLayers(doc: Document, options: HtmlImportOptions = {})
     tagRefCounts: {},
     htmlIds: new Set(),
     pendingAnchors: [],
+    unresolvedLinks: options.unresolvedLinks ?? null,
     componentMarks: options.componentMarks ?? null,
+    ycodeMarks: options.ycodeMarks ?? null,
   };
 
   // Parsers hoist <style>, <link>, <title>, etc. into <head>, out of the body walk
@@ -1097,6 +1301,32 @@ function buildLinkAttrs(link: LinkSettings, href: string): string[] {
   return attrs;
 }
 
+function isTruthyAttr(value: unknown): boolean {
+  return value === true || value === 'true' || value === '';
+}
+
+/** name / placeholder / required / … of a form field, mirroring what the import reads. */
+function buildFieldAttrs(layer: Layer): string[] {
+  const attrs: string[] = [];
+  for (const name of FIELD_ATTRS) {
+    const value = layer.attributes?.[name];
+    if (value !== undefined && value !== null && value !== '') attrs.push(`${name}="${escapeHtml(String(value))}"`);
+  }
+  for (const name of BOOLEAN_FIELD_ATTRS) {
+    if (isTruthyAttr(layer.attributes?.[name])) attrs.push(name);
+  }
+  return attrs;
+}
+
+/** User-defined custom attributes (aria-*, role, data-*, …) from the settings panel. */
+function buildCustomAttrs(layer: Layer): string[] {
+  const custom = layer.settings?.customAttributes;
+  if (!custom) return [];
+  return Object.entries(custom)
+    .filter(([name]) => name !== 'class' && name !== 'style' && name !== 'id')
+    .map(([name, value]) => (value === '' ? name : `${name}="${escapeHtml(String(value))}"`));
+}
+
 function layerToHtmlString(
   layer: Layer,
   indent: number,
@@ -1154,26 +1384,31 @@ function layerElementToHtml(
     if (layer.attributes?.height) attrs.push(`height="${escapeHtml(layer.attributes.height)}"`);
   }
 
-  if (layer.name === 'input') {
+  if (layer.name === 'input' || layer.name === 'textarea' || layer.name === 'select') {
+    if (layer.name === 'input' && layer.attributes?.type) attrs.push(`type="${escapeHtml(layer.attributes.type)}"`);
+    if (layer.name === 'textarea' && layer.attributes?.rows) attrs.push(`rows="${escapeHtml(String(layer.attributes.rows))}"`);
+    attrs.push(...buildFieldAttrs(layer));
+  }
+
+  if (layer.name === 'button') {
     if (layer.attributes?.type) attrs.push(`type="${escapeHtml(layer.attributes.type)}"`);
-    if (layer.attributes?.placeholder) attrs.push(`placeholder="${escapeHtml(layer.attributes.placeholder)}"`);
-    if (layer.attributes?.name) attrs.push(`name="${escapeHtml(layer.attributes.name)}"`);
+    if (isTruthyAttr(layer.attributes?.disabled)) attrs.push('disabled');
   }
 
-  if (layer.name === 'textarea') {
-    if (layer.attributes?.placeholder) attrs.push(`placeholder="${escapeHtml(layer.attributes.placeholder)}"`);
-    if (layer.attributes?.name) attrs.push(`name="${escapeHtml(layer.attributes.name)}"`);
-    if (layer.attributes?.rows) attrs.push(`rows="${escapeHtml(String(layer.attributes.rows))}"`);
-  }
-
-  if (layer.name === 'select') {
-    if (layer.attributes?.name) attrs.push(`name="${escapeHtml(layer.attributes.name)}"`);
+  if (layer.name === 'option') {
+    if (layer.attributes?.value !== undefined) attrs.push(`value="${escapeHtml(String(layer.attributes.value))}"`);
+    if (isTruthyAttr(layer.attributes?.selected)) attrs.push('selected');
+    if (isTruthyAttr(layer.attributes?.disabled)) attrs.push('disabled');
+    if (isTruthyAttr(layer.attributes?.hidden)) attrs.push('hidden');
   }
 
   if (layer.name === 'form') {
     if (layer.attributes?.action) attrs.push(`action="${escapeHtml(layer.attributes.action)}"`);
     if (layer.attributes?.method) attrs.push(`method="${escapeHtml(layer.attributes.method)}"`);
+    if (layer.attributes?.name) attrs.push(`name="${escapeHtml(layer.attributes.name)}"`);
   }
+
+  attrs.push(...buildCustomAttrs(layer));
 
   if (layer.name === 'iframe') {
     const src = getVariableContent(layer.variables?.iframe?.src);

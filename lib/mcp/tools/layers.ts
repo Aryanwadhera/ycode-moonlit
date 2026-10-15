@@ -16,18 +16,21 @@ import {
   applyImageUpdate,
   applyLayerSettings,
   buildLinkSettings,
+  defaultDynamicPageItem,
   describeLink,
   resolveLinkAnchor,
 } from '@/lib/mcp/utils';
-import type { RichTextBlock } from '@/lib/mcp/utils';
+import type { LinkInput, RichTextBlock } from '@/lib/mcp/utils';
 import { buildAssetUrlMap, collectLayerAssetIds } from '@/lib/asset-utils';
 import { layerToExportHtml } from '@/lib/html-layer-converter';
 import { findLayersWithAnchorId } from '@/lib/layer-utils';
 import { getAssetsByIds } from '@/lib/repositories/assetRepository';
+import { renderLayerHtml } from '@/lib/mcp/rendered-export';
+import { getComponentNames } from '@/lib/repositories/componentRepository';
 import { getAllDraftPageFolders } from '@/lib/repositories/pageFolderRepository';
-import { getAllDraftPages } from '@/lib/repositories/pageRepository';
+import { getAllDraftPages, getPageById } from '@/lib/repositories/pageRepository';
 import { collectFontFamiliesFromDesign, ensureFontsInstalled, fontWarnings } from '@/lib/mcp/font-install';
-import { hasLayerQuery, MAX_SEARCH_MATCHES, queryLayers } from '@/lib/mcp/layer-query';
+import { hasComponentInstances, hasLayerQuery, labelComponentInstances, MAX_SEARCH_MATCHES, queryLayers } from '@/lib/mcp/layer-query';
 import { getCachedLayers as getPageLayers, saveCachedLayers } from '@/lib/mcp/page-layers';
 import { designSchema, richTextBlockSchema, templateEnum } from './shared-schemas';
 
@@ -58,7 +61,10 @@ Typical flow: fields "summary" + depth 2 for an overview, then layer_id for the 
       fields: z.enum(['full', 'summary']).optional().describe('"summary" for a compact view; default "full"'),
     },
     async ({ page_id, layer_id, depth, search, fields }) => {
-      const layers = await getPageLayers(page_id);
+      let layers = await getPageLayers(page_id);
+      if (hasComponentInstances(layers)) {
+        layers = labelComponentInstances(layers, await getComponentNames());
+      }
       const query = { layerId: layer_id, depth, search, fields };
       if (!hasLayerQuery(query)) {
         return { content: [{ type: 'text' as const, text: JSON.stringify(layers) }] };
@@ -366,7 +372,11 @@ or a named size ("sm", "md", "lg"). Apply on the text/heading/button layer.`,
 
 LINK TYPES:
 - url: External URL (e.g. "https://example.com")
-- page: Link to another page in the site. Pass collection_item_id alongside page_id_target to link to a specific dynamic-page item.
+- page: Link to another page in the site. For a dynamic page, collection_item_id picks the item:
+  "current-collection" (the item of the enclosing Collection List — the default when the layer sits
+  inside a list of that collection), "current-page" (the item of the dynamic page being viewed —
+  the default on such a page), "next-item" / "previous-item", or a specific item id. Without one the
+  link renders the literal "/blog/{slug}".
 - email: Mailto link
 - phone: Tel link
 - asset: Download link to an asset
@@ -379,7 +389,7 @@ LINK TYPES:
       link_type: z.enum(['url', 'email', 'phone', 'asset', 'page']).describe('Type of link'),
       url: z.string().optional().describe('For url type: the target URL'),
       page_id_target: z.string().optional().describe('For page type: the target page ID'),
-      collection_item_id: z.string().optional().describe('For dynamic page links: the specific collection item the link should resolve to. Omit to use the current item at runtime.'),
+      collection_item_id: z.string().optional().describe('For dynamic page links: "current-collection", "current-page", "next-item", "previous-item", or a collection item id. Defaults to "current-collection" inside a list of that collection and "current-page" on its dynamic page.'),
       email: z.string().optional().describe('For email type: the email address'),
       phone: z.string().optional().describe('For phone type: the phone number'),
       asset_id: z.string().optional().describe('For asset type: the asset ID to download'),
@@ -402,7 +412,11 @@ LINK TYPES:
       if ('error' in resolved) {
         return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true };
       }
-      const link = resolved.input;
+      let link: LinkInput = resolved.input;
+      if (link.link_type === 'page' && link.page_id_target && !link.collection_item_id) {
+        const [targetPage, currentPage] = await Promise.all([getPageById(link.page_id_target), getPageById(page_id)]);
+        link = defaultDynamicPageItem(link, layers, layer_id, targetPage, currentPage);
+      }
 
       const updated = updateLayerById(layers, layer_id, (l) => ({
         ...l,
@@ -725,12 +739,33 @@ redirect_url: used when success_action is "redirect". Accepts an internal path "
     `Render a layer (and its descendants) to a self-contained HTML string with Tailwind
 classes preserved. Useful for copying a section, sharing markup, or seeding another
 page via the HTML import flow. Links render as <a href> with the same href the published
-page uses (page, anchor, url, email, phone, asset), so you can check link setup here.`,
+page uses (page, anchor, url, email, phone, asset), so you can check link setup here.
+
+By default this is the raw draft: component instances stay as placeholders and a Collection
+List renders its template once with empty bindings. Pass rendered: true to get what the
+published page would show instead — components expanded, Collection Lists repeated with the
+real draft items, CMS fields filled in (text, images, links), visibility conditions applied,
+rich text with element styles. Use it to verify a CMS section or a dynamic page without
+publishing. On a dynamic page it renders the first item unless collection_item_slug is set.
+The rendered HTML is for inspection, not re-import (ids carry per-item suffixes).`,
     {
       page_id: z.string().describe('The page ID'),
       layer_id: z.string().describe('The layer ID to export'),
+      rendered: z.boolean().optional().describe('Render like the published site: components expanded, collection items and CMS fields resolved. Default false (raw draft).'),
+      collection_item_slug: z.string().optional().describe('Dynamic pages with rendered: true — slug of the collection item to render. Defaults to the first item.'),
     },
-    async ({ page_id, layer_id }) => {
+    async ({ page_id, layer_id, rendered, collection_item_slug }) => {
+      if (rendered) {
+        const result = await renderLayerHtml({ pageId: page_id, layerId: layer_id, collectionItemSlug: collection_item_slug });
+        if ('error' in result) {
+          return { content: [{ type: 'text' as const, text: `Error: ${result.error}` }], isError: true };
+        }
+        const header = [
+          `<!-- rendered: ${result.path}${result.item ? ` (item ${result.item.slug})` : ''} -->`,
+          ...(result.note ? [`<!-- ${result.note} -->`] : []),
+        ].join('\n');
+        return { content: [{ type: 'text' as const, text: `${header}\n${result.html}` }] };
+      }
       const layers = await getPageLayers(page_id);
       const layer = findLayerById(layers, layer_id);
       if (!layer) {

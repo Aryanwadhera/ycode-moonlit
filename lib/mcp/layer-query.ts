@@ -141,6 +141,27 @@ function findWithAncestors(layers: Layer[], id: string, ancestors: Layer[] = [])
   return null;
 }
 
+/**
+ * Labels component instances with the component's CURRENT name. Instances store
+ * the name they were created with as customName, so after a component is renamed
+ * the stored label goes stale; the editor's layer tree always shows the live name.
+ */
+export function labelComponentInstances(tree: Layer[], componentNames: Map<string, string>): Layer[] {
+  if (componentNames.size === 0) return tree;
+  const relabel = (layer: Layer): Layer => {
+    const name = layer.componentId ? componentNames.get(layer.componentId) : undefined;
+    const children = layer.children ? layer.children.map(relabel) : layer.children;
+    if (!name && children === layer.children) return layer;
+    return { ...layer, ...(name ? { customName: name } : {}), ...(children !== undefined ? { children } : {}) };
+  };
+  return tree.map(relabel);
+}
+
+/** True when any layer in the tree is a component instance. */
+export function hasComponentInstances(tree: Layer[]): boolean {
+  return tree.some((layer) => !!layer.componentId || hasComponentInstances(layer.children ?? []));
+}
+
 export function queryLayers(tree: Layer[], query: LayerQuery): LayerQueryResult {
   const fields = query.fields ?? 'full';
   let roots = tree;
