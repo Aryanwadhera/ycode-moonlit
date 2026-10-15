@@ -183,7 +183,7 @@ export const designSchema = z.object({
     isActive: z.boolean().optional(),
     transitionProperty: z.string().optional().describe('e.g. "all", "opacity", "transform, background-color"'),
     duration: z.string().optional().describe('e.g. "200ms" or "0.3s"'),
-    easing: z.string().optional().describe('e.g. "ease-in-out", "linear", "cubic-bezier(...)"'),
+    easing: z.string().optional().describe('"linear", "in", "out", "in-out" (the "ease-" prefix is optional), or a cubic-bezier(...) value'),
     delay: z.string().optional().describe('e.g. "100ms"'),
   }).optional(),
 }).describe('Design properties object. Set isActive: true on any category to apply it.');

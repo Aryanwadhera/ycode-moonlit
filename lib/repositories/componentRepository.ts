@@ -62,6 +62,28 @@ export async function getAllComponents(isPublished: boolean = false): Promise<Co
 }
 
 /**
+ * Map of draft component id → name, without loading layer trees.
+ */
+export async function getComponentNames(): Promise<Map<string, string>> {
+  const client = await getSupabaseAdmin();
+  if (!client) {
+    throw new Error('Failed to initialize Supabase client');
+  }
+
+  const { data, error } = await client
+    .from('components')
+    .select('id, name')
+    .eq('is_published', false)
+    .is('deleted_at', null);
+
+  if (error) {
+    throw new Error(`Failed to fetch component names: ${error.message}`);
+  }
+
+  return new Map((data || []).map((row) => [row.id as string, row.name as string]));
+}
+
+/**
  * Get a single component by ID (draft by default, excludes soft deleted)
  * With composite primary key, we need to specify is_published to get a single row
  */

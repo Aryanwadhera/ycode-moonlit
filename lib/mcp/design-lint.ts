@@ -48,6 +48,7 @@ export function lintDesign(layers: Layer[], touchedIds: Set<string>): string[] {
   const warnings: string[] = [];
   const trioGaps: TrioGap[] = [];
   const fontSizes = new Set<string>();
+  const linksWithoutHover: string[] = [];
 
   const walk = (
     layer: Layer,
@@ -83,6 +84,9 @@ export function lintDesign(layers: Layer[], touchedIds: Set<string>): string[] {
       const missing = (Object.keys(type) as TypeProperty[]).filter((key) => !type[key]);
       if (missing.length > 0) trioGaps.push({ label: labelOf(layer), layerName: layer.name, missing });
     }
+    if (touched && isInteractive(layer) && !hasHoverTreatment(layer)) {
+      linksWithoutHover.push(labelOf(layer));
+    }
 
     for (const child of layer.children ?? []) {
       walk(child, touched, bg, type, layer);
@@ -95,6 +99,7 @@ export function lintDesign(layers: Layer[], touchedIds: Set<string>): string[] {
   }
 
   warnings.push(...summarizeTrioGaps(trioGaps));
+  warnings.push(...summarizeMissingHover(linksWithoutHover));
 
   if (fontSizes.size > 6) {
     warnings.push(
@@ -118,6 +123,41 @@ function summarizeTrioGaps(gaps: TrioGap[]): string[] {
   const missing = [...new Set(gaps.flatMap((gap) => gap.missing))];
   const examples = gaps.slice(0, 3).map((gap) => gap.label).join(', ');
   return [`${gaps.length} text layers have no ${missing.join('/')} on them or any parent (e.g. ${examples}) — ${TRIO_HINT}`];
+}
+
+const HOVER_HINT = 'give every link and button a hover state (ui_state "hover": color, background, opacity or underline) plus a transition.';
+
+function summarizeMissingHover(labels: string[]): string[] {
+  if (labels.length === 0) return [];
+  if (labels.length === 1) return [`${labels[0]} is clickable but has no hover state — ${HOVER_HINT}`];
+  const examples = labels.slice(0, 3).join(', ');
+  return [`${labels.length} clickable layers have no hover state (e.g. ${examples}) — ${HOVER_HINT}`];
+}
+
+/** Links and buttons — anything a visitor expects to react on hover. */
+function isInteractive(layer: Layer): boolean {
+  if (layer.componentId) return false;
+  if (layer.name === 'button') return true;
+  const link = layer.variables?.link;
+  return Boolean(link && link.type);
+}
+
+/** All classes including hover:/md: variants. */
+function allClassesOf(layer: Layer): string[] {
+  const raw = Array.isArray(layer.classes) ? layer.classes.join(' ') : (layer.classes ?? '');
+  return raw.split(/\s+/).filter(Boolean);
+}
+
+/**
+ * True when the layer (or anything inside it) reacts to hover: a hover:/group-hover:
+ * class, a hover-triggered interaction, or a shared style (whose classes aren't
+ * visible here, so it's given the benefit of the doubt).
+ */
+function hasHoverTreatment(layer: Layer): boolean {
+  if ((layer.styleIds?.length ?? 0) > 0 || layer.styleId) return true;
+  if (allClassesOf(layer).some((c) => /(^|:)(group-)?hover:/.test(c))) return true;
+  if (layer.interactions?.some((i) => i.trigger === 'hover')) return true;
+  return (layer.children ?? []).some((child) => hasHoverTreatment(child));
 }
 
 /** Which of font size / weight / line height the layer sets itself (design or classes). */
@@ -173,6 +213,29 @@ function lintLayer(
     }
   }
 
+  // A Collection List layer is cloned once per item, so list-level layout on it
+  // (a multi-column grid, dividers) is repeated per item instead of wrapping the items.
+  if (layer.variables?.collection) {
+    const columns = gridColumnsOf(layer, classes);
+    const hasDividers = classes.some((c) => c.startsWith('divide-'));
+    if ((columns !== null && columns !== 1) || hasDividers) {
+      const what = columns !== null && columns !== 1
+        ? (columns > 1 ? `a ${columns}-column grid` : 'a multi-column grid')
+        : 'divide-* borders';
+      warnings.push(
+        `${label} is a Collection List, which repeats ITSELF once per item — ${what} on it renders once per item. Put display grid / gridTemplateColumns / gap / dividers on the PARENT div and keep only the card styling (padding, background, border) on this layer.`,
+      );
+    }
+  }
+
+  // Navigation that hides its links on smaller screens needs a native toggle to show them again.
+  const tag = layer.settings?.tag;
+  if ((tag === 'nav' || tag === 'header') && hidesLinksOnSmallScreens(layer) && !hasClickInteraction(layer)) {
+    warnings.push(
+      `${label} ${tag} hides links on tablet/mobile but nothing shows them again — add a menu button with a native click interaction (set_layer_interactions: click, yoyo, tween display hidden→visible on the menu panel, apply_styles display "on-load"), like the navigation-001 layout. Never use custom <script> for menus.`,
+    );
+  }
+
   // Flex container with multiple children but no explicit direction.
   const isFlex = layer.design?.layout?.display === 'Flex' || classes.includes('flex');
   if (isFlex && (layer.children?.length ?? 0) >= 2) {
@@ -196,6 +259,40 @@ function lintLayer(
       );
     }
   }
+}
+
+/** Column count of a grid layer from design or classes; null when it isn't a grid or the count is unknown. */
+function gridColumnsOf(layer: Layer, classes: string[]): number | null {
+  const isGrid = layer.design?.layout?.display === 'grid' || classes.includes('grid');
+  if (!isGrid) return null;
+  const template = layer.design?.layout?.gridTemplateColumns;
+  if (template) {
+    if (/^\d+$/.test(template)) return Number(template);
+    const repeat = /^repeat\((\d+),/.exec(template);
+    if (repeat) return Number(repeat[1]);
+    const tracks = template.trim().split(/\s+/).length;
+    return tracks;
+  }
+  for (const cls of classes) {
+    const match = /^grid-cols-(\d+)$/.exec(cls);
+    if (match) return Number(match[1]);
+    if (cls.startsWith('grid-cols-[')) return 0; // arbitrary template: unknown count, still a list layout
+  }
+  return null;
+}
+
+/** Any descendant (or the layer itself) hidden below the tablet/mobile breakpoint. */
+function hidesLinksOnSmallScreens(layer: Layer): boolean {
+  const hidden = (l: Layer) => allClassesOf(l).some((c) => /^max-(lg|md):hidden$/.test(c));
+  const walk = (l: Layer): boolean => hidden(l) || (l.children ?? []).some(walk);
+  return walk(layer);
+}
+
+/** Any click interaction in the subtree (a menu toggle), or a component instance that may own one. */
+function hasClickInteraction(layer: Layer): boolean {
+  if (layer.componentId) return true;
+  if (layer.interactions?.some((i) => i.trigger === 'click')) return true;
+  return (layer.children ?? []).some(hasClickInteraction);
 }
 
 function isFlexColumn(layer: Layer): boolean {

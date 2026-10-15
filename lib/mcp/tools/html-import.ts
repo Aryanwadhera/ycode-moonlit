@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import { broadcastComponentCreated, broadcastComponentLayersUpdated } from '@/lib/mcp/broadcast';
+import { lintDesign } from '@/lib/mcp/design-lint';
 import { collectFontFamiliesFromDesign, ensureFontsInstalled, fontWarnings } from '@/lib/mcp/font-install';
 import { extractMarkedComponents } from '@/lib/mcp/html-import-components';
 import type { ImportedComponent } from '@/lib/mcp/html-import-components';
@@ -296,7 +297,9 @@ expressible in HTML; add them afterwards with their tools.`,
       const { groups, omitted } = groupWarnings(warnings);
       const refKeys = Object.keys(refs);
       const fonts = await ensureFontsInstalled(fontFamilies);
-      const designWarnings = fontWarnings(fonts);
+      // Lint the imported subtree (hover states, collection lists, mobile nav, structure)
+      // the same way batch_operations does, so problems surface before publishing.
+      const designWarnings = [...fontWarnings(fonts), ...lintDesign(updated, new Set(imported.map((l) => l.id)))];
 
       return {
         content: [{

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { convertGradientClasses, convertMobileFirstClasses, normalizePositionClasses } from './html-import-classes';
+import { convertGradientClasses, convertMobileFirstClasses, normalizeNegativeMargins, normalizePositionClasses } from './html-import-classes';
 
 const convert = (classes: string) => convertMobileFirstClasses(classes.split(' '));
 
@@ -65,6 +65,17 @@ test('combines v4 gradient stops into one editable gradient', () => {
     convertGradientClasses(['hover:bg-linear-to-b', 'hover:to-[#000]']),
     ['hover:bg-[linear-gradient(to_bottom,transparent,#000)]'],
   );
+  assert.deepEqual(
+    convertGradientClasses(['bg-linear-to-b', 'from-[#000]', 'to-transparent']),
+    ['bg-[linear-gradient(to_bottom,#000,transparent)]'],
+  );
   assert.deepEqual(convertGradientClasses(['from-[#fff]', 'to-[#000]']), ['from-[#fff]', 'to-[#000]']);
   assert.deepEqual(convertGradientClasses(['bg-linear-to-r', 'from-[#fff]/50']), ['bg-linear-to-r', 'from-[#fff]/50']);
+});
+
+test('rewrites negative margins as arbitrary values the spacing controls edit', () => {
+  assert.deepEqual(
+    normalizeNegativeMargins(['-ml-3', '-mt-[12px]', 'md:-mx-px', '-mb-auto', 'ml-3', '-translate-x-4']),
+    ['ml-[-0.75rem]', 'mt-[-12px]', 'md:mx-[-1px]', '-mb-auto', 'ml-3', '-translate-x-4'],
+  );
 });
