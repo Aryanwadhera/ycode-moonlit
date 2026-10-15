@@ -245,7 +245,7 @@ export const updateLinkOp = z.object({
   link_type: z.enum(['url', 'email', 'phone', 'asset', 'page']).describe('Type of link'),
   url: z.string().optional().describe('For url type: the target URL'),
   page_id_target: z.string().optional().describe('For page type: the target page ID'),
-  collection_item_id: z.string().optional().describe('For dynamic page links: the specific collection item. Omit to resolve per item at runtime.'),
+  collection_item_id: z.string().optional().describe('For dynamic page links: "current-collection", "current-page", "next-item", "previous-item", or a collection item id. Defaults to "current-collection" inside a list of that collection and "current-page" on its dynamic page.'),
   email: z.string().optional().describe('For email type: the email address'),
   phone: z.string().optional().describe('For phone type: the phone number'),
   asset_id: z.string().optional().describe('For asset type: the asset ID to download'),

@@ -285,7 +285,8 @@ The field must exist in the relevant collection: for source "collection" that's 
 the nearest ancestor Collection List; for source "page" it's the dynamic page's collection.
 
 TIP: To link a card to the item's own dynamic page, use update_layer_link with link_type "page",
-page_id_target = the dynamic page, and NO collection_item_id (it resolves to the current item).
+page_id_target = the dynamic page, and collection_item_id "current-collection" (the default when
+the layer is inside a list of that collection).
 
 Binding many layers (a whole card, several lists)? Use the bind_field / bind_collection ops in
 one batch_operations call instead of one call per field.`,

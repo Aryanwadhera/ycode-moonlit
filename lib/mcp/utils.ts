@@ -3,8 +3,10 @@
  * These are simplified versions focused on the MCP tool use case.
  */
 
-import type { Layer, DesignProperties, Breakpoint, UIState, CollectionFieldType, TranslationContentType, LinkSettings } from '@/types';
+import type { Layer, DesignProperties, Breakpoint, UIState, CollectionFieldType, TranslationContentType, LinkSettings, Page } from '@/types';
 import { generateId } from '@/lib/utils';
+import { findParentCollectionLayer } from '@/lib/layer-utils';
+import { COLLECTION_ITEM_KEYWORDS } from '@/lib/link-utils';
 import { markdownToTiptapJson } from '@/lib/markdown-to-tiptap';
 import {
   propertyToClass,
@@ -663,6 +665,38 @@ export interface LinkInput {
   target?: '_blank' | '_self' | '_parent' | '_top';
   rel?: string;
   download?: boolean;
+}
+
+export type DynamicPageLinkTarget = Pick<Page, 'is_dynamic' | 'settings'>;
+
+/**
+ * A link to a dynamic page must say WHICH item it opens — without a
+ * collection_item_id the renderer prints the literal "/blog/{slug}". Agents
+ * link cards inside a Collection List to the detail page constantly, so fill
+ * in the keyword they mean: "current-collection" when the layer is (or sits
+ * inside) a list of the page's collection, "current-page" when the layer is on
+ * a dynamic page of that collection. Anything else is left for the agent.
+ */
+export function defaultDynamicPageItem<T extends LinkInput>(
+  input: T,
+  layers: Layer[],
+  layerId: string,
+  targetPage: DynamicPageLinkTarget | null | undefined,
+  currentPage?: DynamicPageLinkTarget | null,
+): T {
+  if (input.link_type !== 'page' || input.collection_item_id || !targetPage?.is_dynamic) return input;
+  const collectionId = targetPage.settings?.cms?.collection_id;
+  if (!collectionId) return input;
+
+  const self = findLayerById(layers, layerId);
+  const list = self?.variables?.collection?.id ? self : findParentCollectionLayer(layers, layerId);
+  if (list?.variables?.collection?.id === collectionId) {
+    return { ...input, collection_item_id: COLLECTION_ITEM_KEYWORDS.CURRENT_COLLECTION };
+  }
+  if (currentPage?.is_dynamic && currentPage.settings?.cms?.collection_id === collectionId) {
+    return { ...input, collection_item_id: COLLECTION_ITEM_KEYWORDS.CURRENT_PAGE };
+  }
+  return input;
 }
 
 /**

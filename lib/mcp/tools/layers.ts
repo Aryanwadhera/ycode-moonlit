@@ -16,10 +16,11 @@ import {
   applyImageUpdate,
   applyLayerSettings,
   buildLinkSettings,
+  defaultDynamicPageItem,
   describeLink,
   resolveLinkAnchor,
 } from '@/lib/mcp/utils';
-import type { RichTextBlock } from '@/lib/mcp/utils';
+import type { LinkInput, RichTextBlock } from '@/lib/mcp/utils';
 import { buildAssetUrlMap, collectLayerAssetIds } from '@/lib/asset-utils';
 import { layerToExportHtml } from '@/lib/html-layer-converter';
 import { findLayersWithAnchorId } from '@/lib/layer-utils';
@@ -27,7 +28,7 @@ import { getAssetsByIds } from '@/lib/repositories/assetRepository';
 import { renderLayerHtml } from '@/lib/mcp/rendered-export';
 import { getComponentNames } from '@/lib/repositories/componentRepository';
 import { getAllDraftPageFolders } from '@/lib/repositories/pageFolderRepository';
-import { getAllDraftPages } from '@/lib/repositories/pageRepository';
+import { getAllDraftPages, getPageById } from '@/lib/repositories/pageRepository';
 import { collectFontFamiliesFromDesign, ensureFontsInstalled, fontWarnings } from '@/lib/mcp/font-install';
 import { hasComponentInstances, hasLayerQuery, labelComponentInstances, MAX_SEARCH_MATCHES, queryLayers } from '@/lib/mcp/layer-query';
 import { getCachedLayers as getPageLayers, saveCachedLayers } from '@/lib/mcp/page-layers';
@@ -371,7 +372,11 @@ or a named size ("sm", "md", "lg"). Apply on the text/heading/button layer.`,
 
 LINK TYPES:
 - url: External URL (e.g. "https://example.com")
-- page: Link to another page in the site. Pass collection_item_id alongside page_id_target to link to a specific dynamic-page item.
+- page: Link to another page in the site. For a dynamic page, collection_item_id picks the item:
+  "current-collection" (the item of the enclosing Collection List — the default when the layer sits
+  inside a list of that collection), "current-page" (the item of the dynamic page being viewed —
+  the default on such a page), "next-item" / "previous-item", or a specific item id. Without one the
+  link renders the literal "/blog/{slug}".
 - email: Mailto link
 - phone: Tel link
 - asset: Download link to an asset
@@ -384,7 +389,7 @@ LINK TYPES:
       link_type: z.enum(['url', 'email', 'phone', 'asset', 'page']).describe('Type of link'),
       url: z.string().optional().describe('For url type: the target URL'),
       page_id_target: z.string().optional().describe('For page type: the target page ID'),
-      collection_item_id: z.string().optional().describe('For dynamic page links: the specific collection item the link should resolve to. Omit to use the current item at runtime.'),
+      collection_item_id: z.string().optional().describe('For dynamic page links: "current-collection", "current-page", "next-item", "previous-item", or a collection item id. Defaults to "current-collection" inside a list of that collection and "current-page" on its dynamic page.'),
       email: z.string().optional().describe('For email type: the email address'),
       phone: z.string().optional().describe('For phone type: the phone number'),
       asset_id: z.string().optional().describe('For asset type: the asset ID to download'),
@@ -407,7 +412,11 @@ LINK TYPES:
       if ('error' in resolved) {
         return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true };
       }
-      const link = resolved.input;
+      let link: LinkInput = resolved.input;
+      if (link.link_type === 'page' && link.page_id_target && !link.collection_item_id) {
+        const [targetPage, currentPage] = await Promise.all([getPageById(link.page_id_target), getPageById(page_id)]);
+        link = defaultDynamicPageItem(link, layers, layer_id, targetPage, currentPage);
+      }
 
       const updated = updateLayerById(layers, layer_id, (l) => ({
         ...l,

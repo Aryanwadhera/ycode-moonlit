@@ -194,7 +194,7 @@ collection list goes; on the detail page bind fields with source "page").`,
             next_steps: [
               indexPage ? `Build the listing on index_page ${indexPage.id}: a collection layer bound to "${collection.name}" (bind_collection_layer or import_html with data-ycode-collection).` : null,
               `Build the detail layout on detail_page ${detailPage.id}: bind fields with bind_layer_field source "page" (or import_html data-ycode-field).`,
-              'Link list cards to the detail page with update_layer_link (link_type "page", no collection_item_id) or data-ycode-link="item".',
+              'Link list cards to the detail page with update_layer_link (link_type "page", collection_item_id "current-collection") or data-ycode-link="item".',
             ].filter(Boolean),
           }),
         }],
