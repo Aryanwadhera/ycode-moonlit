@@ -24,6 +24,7 @@ import { buildAssetUrlMap, collectLayerAssetIds } from '@/lib/asset-utils';
 import { layerToExportHtml } from '@/lib/html-layer-converter';
 import { findLayersWithAnchorId } from '@/lib/layer-utils';
 import { getAssetsByIds } from '@/lib/repositories/assetRepository';
+import { renderLayerHtml } from '@/lib/mcp/rendered-export';
 import { getComponentNames } from '@/lib/repositories/componentRepository';
 import { getAllDraftPageFolders } from '@/lib/repositories/pageFolderRepository';
 import { getAllDraftPages } from '@/lib/repositories/pageRepository';
@@ -729,12 +730,33 @@ redirect_url: used when success_action is "redirect". Accepts an internal path "
     `Render a layer (and its descendants) to a self-contained HTML string with Tailwind
 classes preserved. Useful for copying a section, sharing markup, or seeding another
 page via the HTML import flow. Links render as <a href> with the same href the published
-page uses (page, anchor, url, email, phone, asset), so you can check link setup here.`,
+page uses (page, anchor, url, email, phone, asset), so you can check link setup here.
+
+By default this is the raw draft: component instances stay as placeholders and a Collection
+List renders its template once with empty bindings. Pass rendered: true to get what the
+published page would show instead — components expanded, Collection Lists repeated with the
+real draft items, CMS fields filled in (text, images, links), visibility conditions applied,
+rich text with element styles. Use it to verify a CMS section or a dynamic page without
+publishing. On a dynamic page it renders the first item unless collection_item_slug is set.
+The rendered HTML is for inspection, not re-import (ids carry per-item suffixes).`,
     {
       page_id: z.string().describe('The page ID'),
       layer_id: z.string().describe('The layer ID to export'),
+      rendered: z.boolean().optional().describe('Render like the published site: components expanded, collection items and CMS fields resolved. Default false (raw draft).'),
+      collection_item_slug: z.string().optional().describe('Dynamic pages with rendered: true — slug of the collection item to render. Defaults to the first item.'),
     },
-    async ({ page_id, layer_id }) => {
+    async ({ page_id, layer_id, rendered, collection_item_slug }) => {
+      if (rendered) {
+        const result = await renderLayerHtml({ pageId: page_id, layerId: layer_id, collectionItemSlug: collection_item_slug });
+        if ('error' in result) {
+          return { content: [{ type: 'text' as const, text: `Error: ${result.error}` }], isError: true };
+        }
+        const header = [
+          `<!-- rendered: ${result.path}${result.item ? ` (item ${result.item.slug})` : ''} -->`,
+          ...(result.note ? [`<!-- ${result.note} -->`] : []),
+        ].join('\n');
+        return { content: [{ type: 'text' as const, text: `${header}\n${result.html}` }] };
+      }
       const layers = await getPageLayers(page_id);
       const layer = findLayerById(layers, layer_id);
       if (!layer) {
