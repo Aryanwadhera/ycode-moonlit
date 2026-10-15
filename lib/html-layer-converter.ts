@@ -24,8 +24,17 @@ const ELEMENT_NODE = 1;
 const TEXT_NODE = 3;
 
 /** Something the import dropped or could not convert faithfully. */
+/**
+ * error — content was lost or a binding did not take effect.
+ * warning — something was converted or approximated and may need a follow-up.
+ * hint — the markup renders as written but has no control in the design panel.
+ */
+export type HtmlImportSeverity = 'error' | 'warning' | 'hint';
+
 export interface HtmlImportWarning {
   message: string;
+  /** Defaults to "warning" when a producer doesn't say. */
+  severity?: HtmlImportSeverity;
   /** Element path in the source HTML, e.g. `section[1] > div[2] > img[1]` */
   path: string;
   /** Created layer the warning applies to, when one exists */
@@ -44,6 +53,13 @@ export interface HtmlImportOptions {
   refs?: Record<string, string>;
   /** Html ids already on the target page, so `href="#id"` links to them become native anchors. */
   anchorIds?: Iterable<string>;
+  /**
+   * Receives anchor links the converter could not resolve locally (`#id` with
+   * no such element here or on the page, and any `/path#id`), so the caller can
+   * point them at the page that holds the id. Without it they stay URLs and are
+   * reported as warnings.
+   */
+  unresolvedLinks?: HtmlUnresolvedLink[];
   /**
    * Receives every element marked `data-ycode-component="Name"`, in document
    * order. Without it the attribute is dropped with a warning.
@@ -71,10 +87,47 @@ export type HtmlYcodeMark =
   | { kind: 'toggle'; layerId: string; path: string; name: string }
   | { kind: 'menu'; layerId: string; path: string; name: string };
 
-interface PendingAnchor {
-  layer: Layer;
-  anchorId: string;
+/**
+ * A site-internal link (`#id`, `/path`, `/path#id`) that the converter could not
+ * resolve by itself: the anchor id isn't in the imported HTML or on the target
+ * page, or the href names another page. At least one of `anchorId` / `pagePath`
+ * is set.
+ */
+export interface HtmlUnresolvedLink {
+  layerId: string;
+  /** The `id` after `#`, when the href has one. */
+  anchorId?: string;
+  /** Element path in the source HTML. */
   path: string;
+  /** Site path for `/path`, `/path#id` and `/#id` hrefs; absent for plain `#id`. */
+  pagePath?: string;
+}
+
+export interface ParsedSiteHref {
+  anchorId?: string;
+  pagePath?: string;
+}
+
+interface PendingAnchor extends ParsedSiteHref {
+  layer: Layer;
+  path: string;
+}
+
+/**
+ * Splits site-internal hrefs: `#id`, `/`, `/path`, `/path#id`. Returns null for
+ * anything that should stay a plain URL — external and protocol-relative URLs,
+ * `#` alone, query strings, and paths to files (`/sitemap.xml`).
+ */
+export function parseSiteHref(href: string): ParsedSiteHref | null {
+  const hash = href.indexOf('#');
+  const before = hash === -1 ? href : href.slice(0, hash);
+  const anchorId = hash === -1 ? undefined : href.slice(hash + 1);
+  if (anchorId === '') return null;
+  if (before === '') return anchorId === undefined ? null : { anchorId };
+  if (!before.startsWith('/') || before.startsWith('//') || before.includes('?')) return null;
+  const pagePath = before.length > 1 ? before.replace(/\/+$/, '') : '/';
+  if (/\.[a-z0-9]+$/i.test(pagePath)) return null;
+  return anchorId === undefined ? { pagePath } : { anchorId, pagePath };
 }
 
 interface ImportContext {
@@ -86,12 +139,13 @@ interface ImportContext {
   tagRefCounts: Record<string, number>;
   htmlIds: Set<string>;
   pendingAnchors: PendingAnchor[];
+  unresolvedLinks: HtmlUnresolvedLink[] | null;
   componentMarks: HtmlComponentMark[] | null;
   ycodeMarks: HtmlYcodeMark[] | null;
 }
 
-function warn(ctx: ImportContext, path: string, message: string, layerId?: string): void {
-  ctx.warnings?.push({ message, path, ...(layerId ? { layerId } : {}) });
+function warn(ctx: ImportContext, path: string, message: string, layerId?: string, severity: HtmlImportSeverity = 'warning'): void {
+  ctx.warnings?.push({ message, severity, path, ...(layerId ? { layerId } : {}) });
 }
 
 /** Returns the URL only if it's absolute, otherwise undefined (relative paths become placeholders). */
@@ -372,7 +426,7 @@ function warnInlineAttributes(el: Element, tag: string, ctx: ImportContext, path
   const names = Array.from(el.attributes).map((attr) => attr.name);
   const marks = names.filter((name) => YCODE_ATTRIBUTES.has(name));
   if (marks.length > 0) {
-    warn(ctx, `${path} > ${tag}`, `${marks.join(', ')} on an inline <${tag}> inside running text was ignored — rich text has no per-word bindings. Put the attribute on the block element, or bind mixed text afterwards with set_dynamic_text`);
+    warn(ctx, `${path} > ${tag}`, `${marks.join(', ')} on an inline <${tag}> inside running text was ignored — rich text has no per-word bindings. Put the attribute on the block element, or bind mixed text afterwards with set_dynamic_text`, 'error');
   }
   const dropped = names.filter((name) => !kept.includes(name) && !YCODE_ATTRIBUTES.has(name));
   if (dropped.length > 0) {
@@ -507,7 +561,7 @@ function resolveImportClasses(el: Element, ctx: ImportContext, path: string, lay
   if (ctx.warnings) {
     warnDroppedStyles(styleAttr, ctx, path, layerId);
     for (const cls of approximated) {
-      warn(ctx, path, `"${cls}" was approximated: Ycode's mobile breakpoint covers everything below 768px, so mobile uses the unprefixed value`, layerId);
+      warn(ctx, path, `"${cls}" was approximated: Ycode's mobile breakpoint covers everything below 768px, so mobile uses the unprefixed value`, layerId, 'hint');
     }
     for (const cls of resolved) warnClass(cls, ctx, path, layerId);
   }
@@ -541,7 +595,7 @@ function warnClass(cls: string, ctx: ImportContext, path: string, layerId: strin
 
   const mobileFirst = variants.find((v) => MOBILE_FIRST_BREAKPOINTS.has(v));
   if (mobileFirst) {
-    warn(ctx, path, `Mobile-first prefix "${mobileFirst}:" (in "${cls}") renders, but couldn't be converted to Ycode's desktop-first breakpoints (no unprefixed value for the same property, or xl:/2xl:), so it can't be edited per breakpoint. Use unprefixed classes for desktop, "max-lg:" for tablet and "max-md:" for mobile`, layerId);
+    warn(ctx, path, `Mobile-first prefix "${mobileFirst}:" (in "${cls}") renders, but couldn't be converted to Ycode's desktop-first breakpoints (no unprefixed value for the same property, or xl:/2xl:), so it can't be edited per breakpoint. Use unprefixed classes for desktop, "max-lg:" for tablet and "max-md:" for mobile`, layerId, 'hint');
     return;
   }
 
@@ -552,12 +606,12 @@ function warnClass(cls: string, ctx: ImportContext, path: string, layerId: strin
     && breakpoints.length + states.length === variants.length
     && (breakpoints.length === 0 || variants[0] === breakpoints[0]);
   if (!isEditableVariant) {
-    warn(ctx, path, `Variant "${prefix}" (in "${cls}") renders, but has no control in the design panel`, layerId);
+    warn(ctx, path, `Variant "${prefix}" (in "${cls}") renders, but has no control in the design panel`, layerId, 'hint');
     return;
   }
 
   if (getAffectedProperties(base).length === 0 && !SILENT_RAW_CLASSES.has(base)) {
-    warn(ctx, path, `Class "${base}" renders, but has no control in the design panel (editable only as a raw class)`, layerId);
+    warn(ctx, path, `Class "${base}" renders, but has no control in the design panel (editable only as a raw class)`, layerId, 'hint');
   }
 }
 
@@ -693,9 +747,9 @@ function optionsToLayers(select: Element): Layer[] {
 function warnRelativeSrc(el: Element, tag: string, ctx: ImportContext, path: string, layerId: string, hint: string): void {
   const rawSrc = el.getAttribute('src');
   if (!rawSrc) {
-    warn(ctx, path, `<${tag}> has no src; ${hint}`, layerId);
+    warn(ctx, path, `<${tag}> has no src; ${hint}`, layerId, 'error');
   } else if (!resolveAbsoluteUrl(rawSrc)) {
-    warn(ctx, path, `<${tag}> src "${rawSrc}" is not an absolute URL and was dropped; ${hint}`, layerId);
+    warn(ctx, path, `<${tag}> src "${rawSrc}" is not an absolute URL and was dropped; ${hint}`, layerId, 'error');
   }
 }
 
@@ -746,7 +800,7 @@ function readYcodeMarks(el: Element, ctx: ImportContext, path: string, layerId: 
   const itemLink = el.getAttribute(ITEM_LINK_ATTRIBUTE)?.trim();
   if (itemLink !== undefined && itemLink !== null && el.hasAttribute(ITEM_LINK_ATTRIBUTE)) {
     if (!itemLink || itemLink === 'item') marks.push({ kind: 'item-link', layerId, path });
-    else warn(ctx, path, `${ITEM_LINK_ATTRIBUTE}="${itemLink}" is not supported; use ${ITEM_LINK_ATTRIBUTE}="item"`, layerId);
+    else warn(ctx, path, `${ITEM_LINK_ATTRIBUTE}="${itemLink}" is not supported; use ${ITEM_LINK_ATTRIBUTE}="item"`, layerId, 'error');
   }
   if (el.hasAttribute(TOGGLE_ATTRIBUTE)) marks.push({ kind: 'toggle', layerId, path, name: el.getAttribute(TOGGLE_ATTRIBUTE)?.trim() || 'menu' });
   if (el.hasAttribute(MENU_ATTRIBUTE)) marks.push({ kind: 'menu', layerId, path, name: el.getAttribute(MENU_ATTRIBUTE)?.trim() || 'menu' });
@@ -779,16 +833,28 @@ function addRef(ctx: ImportContext, ref: string, layerId: string, path: string):
   ctx.refs[ref] = layerId;
 }
 
-/** Turns `href="#id"` links whose target exists into native anchor links. */
+/**
+ * Turns `href="#id"` links whose target exists here or on the page into native
+ * anchor links. Everything else (`#id` with no local target, `/path`, `/path#id`)
+ * is handed to `options.unresolvedLinks` for cross-page resolution; without that
+ * collector only the dangling `#id` case is reported.
+ */
 function resolvePendingAnchors(ctx: ImportContext, existingIds: Set<string>): void {
-  for (const { layer, anchorId, path } of ctx.pendingAnchors) {
+  for (const { layer, anchorId, path, pagePath } of ctx.pendingAnchors) {
     const link = layer.variables?.link;
     if (!link) continue;
-    if (ctx.htmlIds.has(anchorId) || existingIds.has(anchorId)) {
+    if (pagePath === undefined && anchorId !== undefined && (ctx.htmlIds.has(anchorId) || existingIds.has(anchorId))) {
       const anchorLink: LinkSettings = { ...link, type: 'url', anchor_layer_id: anchorId };
       delete anchorLink.url;
       layer.variables = { ...layer.variables, link: anchorLink };
-    } else {
+    } else if (ctx.unresolvedLinks) {
+      ctx.unresolvedLinks.push({
+        layerId: layer.id,
+        path,
+        ...(anchorId !== undefined ? { anchorId } : {}),
+        ...(pagePath !== undefined ? { pagePath } : {}),
+      });
+    } else if (pagePath === undefined) {
       warn(ctx, path, `Link "#${anchorId}" has no element with id "${anchorId}" in the import or on the page, so it was kept as a URL`, layer.id);
     }
   }
@@ -865,9 +931,8 @@ function elementToLayer(el: Element, ctx: ImportContext, path: string): Layer | 
       if (target) linkSettings.target = target;
       if (rel) linkSettings.rel = rel;
       layer.variables = { ...layer.variables, link: linkSettings };
-      if (href.startsWith('#') && href.length > 1) {
-        ctx.pendingAnchors.push({ layer, anchorId: href.slice(1), path });
-      }
+      const anchor = parseSiteHref(href);
+      if (anchor) ctx.pendingAnchors.push({ layer, path, ...anchor });
     }
   }
 
@@ -1041,7 +1106,7 @@ function elementToLayer(el: Element, ctx: ImportContext, path: string): Layer | 
   const children = childNodesToLayers(el, ctx, path);
 
   if (children.length > 0 && isLeafLayer(layer)) {
-    warn(ctx, path, `<${tag}> contains block content, but its "${layerName}" layer can't have children in the editor; wrap the content in a div instead`, layerId);
+    warn(ctx, path, `<${tag}> contains block content, but its "${layerName}" layer can't have children in the editor; wrap the content in a div instead`, layerId, 'error');
   }
 
   if (isTextLayer && children.length === 0) {
@@ -1097,6 +1162,7 @@ export function documentToLayers(doc: Document, options: HtmlImportOptions = {})
     tagRefCounts: {},
     htmlIds: new Set(),
     pendingAnchors: [],
+    unresolvedLinks: options.unresolvedLinks ?? null,
     componentMarks: options.componentMarks ?? null,
     ycodeMarks: options.ycodeMarks ?? null,
   };

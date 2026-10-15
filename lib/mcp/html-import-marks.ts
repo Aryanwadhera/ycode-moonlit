@@ -143,7 +143,7 @@ export function applyToggleMarks(
     if (mark.kind !== 'toggle') continue;
     const menuMark = menus.get(mark.name);
     if (!menuMark) {
-      warnings.push({ message: `data-ycode-toggle="${mark.name}" has no data-ycode-menu="${mark.name}" panel; no menu interaction was created`, path: mark.path, layerId: mark.layerId });
+      warnings.push({ message: `data-ycode-toggle="${mark.name}" has no data-ycode-menu="${mark.name}" panel; no menu interaction was created`, severity: 'error', path: mark.path, layerId: mark.layerId });
       continue;
     }
     const button = findLayerById(tree, mark.layerId);
@@ -166,7 +166,7 @@ export function applyToggleMarks(
 
   for (const [name, mark] of menus) {
     if (!usedMenus.has(name)) {
-      warnings.push({ message: `data-ycode-menu="${name}" has no data-ycode-toggle="${name}" button; the panel was imported as-is`, path: mark.path, layerId: mark.layerId });
+      warnings.push({ message: `data-ycode-menu="${name}" has no data-ycode-toggle="${name}" button; the panel was imported as-is`, severity: 'error', path: mark.path, layerId: mark.layerId });
     }
   }
 
@@ -231,7 +231,8 @@ export async function applyCmsMarks(layers: Layer[], marks: HtmlYcodeMark[], dep
   const cmsMarks = marks.filter((m) => m.kind === 'collection' || m.kind === 'field' || m.kind === 'item-link');
   if (cmsMarks.length === 0) return result;
 
-  const warn = (mark: HtmlYcodeMark, message: string) => result.warnings.push({ message, path: mark.path, layerId: mark.layerId });
+  // Every CMS mark warning means a binding the HTML asked for did not happen.
+  const warn = (mark: HtmlYcodeMark, message: string) => result.warnings.push({ message, severity: 'error', path: mark.path, layerId: mark.layerId });
   const missing = (mark: HtmlYcodeMark, attr: string) =>
     warn(mark, `${attr} is on a layer that is no longer on the page (it moved into a component); bind it inside the component master instead`);
 

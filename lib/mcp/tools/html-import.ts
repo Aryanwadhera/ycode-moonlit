@@ -6,6 +6,8 @@ import { lintDesign } from '@/lib/mcp/design-lint';
 import { collectFontFamiliesFromDesign, ensureFontsInstalled, fontWarnings } from '@/lib/mcp/font-install';
 import { extractMarkedComponents } from '@/lib/mcp/html-import-components';
 import type { ImportedComponent } from '@/lib/mcp/html-import-components';
+import { resolveCrossPageLinks } from '@/lib/mcp/html-import-links';
+import type { LinkPageSource } from '@/lib/mcp/html-import-links';
 import { applyCmsMarks, applyToggleMarks } from '@/lib/mcp/html-import-marks';
 import type { ImportedCollectionList, ImportedToggle } from '@/lib/mcp/html-import-marks';
 import { getCachedLayers, saveCachedLayers } from '@/lib/mcp/page-layers';
@@ -13,16 +15,22 @@ import { canHaveChildren, findLayerById, generateId, insertLayer, removeLayer } 
 import { getFieldsByCollectionId } from '@/lib/repositories/collectionFieldRepository';
 import { getAllCollections } from '@/lib/repositories/collectionRepository';
 import { createComponent, getAllComponents, getComponentById, updateComponent } from '@/lib/repositories/componentRepository';
-import { getAllPages, getPageById } from '@/lib/repositories/pageRepository';
+import { getAllDraftPageFolders } from '@/lib/repositories/pageFolderRepository';
+import { getAllDraftLayers } from '@/lib/repositories/pageLayersRepository';
+import { getAllDraftPages, getAllPages, getPageById } from '@/lib/repositories/pageRepository';
 import { htmlToLayersOnServer } from '@/lib/server/html-to-layers';
-import type { HtmlImportWarning } from '@/lib/html-layer-converter';
+import { buildSlugPath } from '@/lib/page-utils';
+import type { HtmlImportSeverity, HtmlImportWarning } from '@/lib/html-layer-converter';
 import type { ComponentVariant, Layer } from '@/types';
 
 const MAX_HTML_LENGTH = 200_000;
 const MAX_WARNING_GROUPS = 60;
 const MAX_LAYER_IDS_PER_WARNING = 5;
 
+const SEVERITY_ORDER: Record<HtmlImportSeverity, number> = { error: 0, warning: 1, hint: 2 };
+
 interface WarningGroup {
+  severity: HtmlImportSeverity;
   message: string;
   count: number;
   layer_ids?: string[];
@@ -35,7 +43,7 @@ function groupWarnings(warnings: HtmlImportWarning[]): { groups: WarningGroup[];
   for (const w of warnings) {
     let group = byMessage.get(w.message);
     if (!group) {
-      group = { message: w.message, count: 0, paths: [] };
+      group = { severity: w.severity ?? 'warning', message: w.message, count: 0, paths: [] };
       byMessage.set(w.message, group);
     }
     group.count++;
@@ -44,11 +52,30 @@ function groupWarnings(warnings: HtmlImportWarning[]): { groups: WarningGroup[];
     }
     if (group.paths.length < 2) group.paths.push(w.path);
   }
-  const groups = [...byMessage.values()];
+  // Errors first, so truncation drops hints before anything that lost content.
+  const groups = [...byMessage.values()].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
   return {
     groups: groups.slice(0, MAX_WARNING_GROUPS),
     omitted: Math.max(0, groups.length - MAX_WARNING_GROUPS),
   };
+}
+
+/**
+ * Every draft page with its path and html ids, for pointing `/path` links at
+ * the page with that path and `#id` links at the page that holds the id. The
+ * page being imported into uses the in-memory tree.
+ */
+async function loadLinkPageSources(currentPageId: string | undefined, currentTree: Layer[]): Promise<LinkPageSource[]> {
+  const [pages, folders, allLayers] = await Promise.all([getAllDraftPages(), getAllDraftPageFolders(), getAllDraftLayers()]);
+  const layersByPage = new Map(allLayers.map((row) => [row.page_id, row.layers ?? []] as const));
+  return pages
+    .filter((page) => !page.error_page)
+    .map((page) => ({
+      id: page.id,
+      path: buildSlugPath(page, folders, 'page'),
+      isHomepage: Boolean(page.is_index && !page.page_folder_id),
+      htmlIds: collectHtmlIds(page.id === currentPageId ? currentTree : (layersByPage.get(page.id) ?? [])),
+    }));
 }
 
 function countLayers(layers: Layer[]): number {
@@ -142,8 +169,12 @@ text, which merge into the text as rich-text marks and lose their classes. Inlin
 the only content of their parent stay separate layers when they have their own classes or the
 parent is flex/grid (nav links, button rows, pills).
 
-LINKS: href="#id" becomes a native anchor link when an element with that id is in the HTML or
-already on the page.
+LINKS: href="/pricing" becomes a page link to the page at that path, so it survives slug changes;
+paths with no page (CMS item URLs, pages not built yet) stay URLs with a hint. href="#id" becomes
+a native anchor link when an element with that id is in the HTML or already on the page.
+Otherwise, and for "/#id" or "/pricing#plans", it becomes a page + anchor link to the page holding
+that id (so a shared navbar scrolls correctly from every page). "page_links" in the response
+counts the hrefs converted this way.
 
 REFS: elements with an id or data-ref="name" are returned in "refs" as { name: layer_id }, so you
 can target them afterwards without get_layers. data-ref is not kept on the layer. header, footer, nav,
@@ -179,9 +210,10 @@ the new HTML in one atomic step, at the same position. Pass dry_run: true to get
 warnings without changing anything. Import large pages section by section.
 
 Returns the ids of the created top-level layers plus warnings for anything dropped or converted
-lossily (attributes, unknown tags, relative media, classes without a design-panel control). Fix
-those with the layer tools. Component variables, other animations, and form settings are not
-expressible in HTML; add them afterwards with their tools.`,
+lossily, each with a severity: "error" = content or a binding was lost (fix it), "warning" =
+converted or approximated (check it), "hint" = renders as written but has no design-panel control
+(fine to leave). Component variables, other animations, and form settings are not expressible in
+HTML; add them afterwards with their tools.`,
     {
       page_id: z.string().optional().describe('Page to import into. Provide page_id or component_id.'),
       component_id: z.string().optional().describe('Component to import into (its primary variant unless variant_id is set).'),
@@ -262,7 +294,7 @@ expressible in HTML; add them afterwards with their tools.`,
       const cmsMarks = ycodeMarks.filter((m) => m.kind === 'collection' || m.kind === 'field' || m.kind === 'item-link');
       if (cmsMarks.length > 0 && !page_id) {
         for (const mark of cmsMarks) {
-          warnings.push({ message: 'data-ycode-collection / -field / -link only work when importing into a page; ignored', path: mark.path, layerId: mark.layerId });
+          warnings.push({ message: 'data-ycode-collection / -field / -link only work when importing into a page; ignored', severity: 'error', path: mark.path, layerId: mark.layerId });
         }
       }
 
@@ -276,9 +308,26 @@ expressible in HTML; add them afterwards with their tools.`,
         warnings.push(...toggled.warnings);
       }
 
+      // "/path" and "#id" links to other pages become page (+ anchor) links, so
+      // they survive slug changes and a navbar that turns into a shared component
+      // keeps working on every page. Pure layer data, so it runs before
+      // component extraction.
+      let pageLinksResolved = 0;
+      if (converted.unresolvedLinks.length > 0) {
+        const sources = await loadLinkPageSources(page_id, baseTree);
+        const linked = resolveCrossPageLinks(converted.layers, converted.unresolvedLinks, {
+          pages: sources,
+          currentPageId: page_id,
+          localIds: collectHtmlIds(converted.layers),
+        });
+        converted.layers = linked.layers;
+        pageLinksResolved = linked.resolved.length;
+        warnings.push(...linked.warnings);
+      }
+
       if (componentMarks.length > 0 && !page_id) {
         for (const mark of componentMarks) {
-          warnings.push({ message: 'data-ycode-component only works when importing into a page; ignored', path: mark.path, layerId: mark.layerId });
+          warnings.push({ message: 'data-ycode-component only works when importing into a page; ignored', severity: 'error', path: mark.path, layerId: mark.layerId });
         }
       }
       const extractComponents = componentMarks.length > 0 && !!page_id && !dry_run;
@@ -302,6 +351,7 @@ expressible in HTML; add them afterwards with their tools.`,
               ref_names: refKeys.length > 0 ? refKeys : undefined,
               component_names: componentNames.length > 0 ? componentNames : undefined,
               menu_toggles: toggles.length > 0 ? toggles.length : undefined,
+              page_links: pageLinksResolved > 0 ? pageLinksResolved : undefined,
               cms_marks: page_id && cmsMarks.length > 0 ? cmsMarks.length : undefined,
               warning_count: warnings.length,
               warnings: groups.length > 0 ? groups : undefined,
@@ -367,6 +417,7 @@ expressible in HTML; add them afterwards with their tools.`,
             refs: refKeys.length > 0 ? refs : undefined,
             components: Object.keys(components).length > 0 ? components : undefined,
             menu_toggles: toggles.length > 0 ? toggles : undefined,
+            page_links: pageLinksResolved > 0 ? pageLinksResolved : undefined,
             cms,
             warning_count: warnings.length,
             warnings: groups.length > 0 ? groups : undefined,

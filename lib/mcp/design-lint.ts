@@ -18,6 +18,24 @@ import type { Layer } from '@/types';
 
 const MAX_WARNINGS = 8;
 
+/**
+ * error — renders wrong or unusable (broken structure, unreadable text, menu that can't open).
+ * warning — looks unfinished (no type scale, no hover state, stretched pill).
+ * hint — stylistic advice the agent may skip (implicit flex direction, many font sizes).
+ */
+export type DesignIssueSeverity = 'error' | 'warning' | 'hint';
+
+export interface DesignIssue {
+  severity: DesignIssueSeverity;
+  message: string;
+}
+
+const SEVERITY_ORDER: Record<DesignIssueSeverity, number> = { error: 0, warning: 1, hint: 2 };
+
+export function designIssue(severity: DesignIssueSeverity, message: string): DesignIssue {
+  return { severity, message };
+}
+
 /** Leaf content elements that must never sit directly inside a section. */
 const CONTENT_LEAF_TYPES = new Set([
   'text', 'heading', 'richText', 'image', 'button', 'icon', 'video', 'form',
@@ -44,8 +62,8 @@ interface TrioGap {
  * created or restyled, so pre-existing issues elsewhere on the page don't
  * repeat in every tool result.
  */
-export function lintDesign(layers: Layer[], touchedIds: Set<string>): string[] {
-  const warnings: string[] = [];
+export function lintDesign(layers: Layer[], touchedIds: Set<string>): DesignIssue[] {
+  const warnings: DesignIssue[] = [];
   const trioGaps: TrioGap[] = [];
   const fontSizes = new Set<string>();
   const linksWithoutHover: string[] = [];
@@ -102,12 +120,15 @@ export function lintDesign(layers: Layer[], touchedIds: Set<string>): string[] {
   warnings.push(...summarizeMissingHover(linksWithoutHover));
 
   if (fontSizes.size > 6) {
-    warnings.push(
+    warnings.push(designIssue('hint',
       `Page uses ${fontSizes.size} distinct font sizes — consolidate to 4-5 for a clean hierarchy.`,
-    );
+    ));
   }
 
-  return warnings.slice(0, MAX_WARNINGS);
+  // Errors first, so truncation drops hints before anything that renders wrong.
+  return warnings
+    .sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity])
+    .slice(0, MAX_WARNINGS);
 }
 
 function labelOf(layer: Layer): string {
@@ -116,22 +137,22 @@ function labelOf(layer: Layer): string {
 
 const TRIO_HINT = 'always set the full trio (fontSize, fontWeight, lineHeight) on the text or a parent.';
 
-function summarizeTrioGaps(gaps: TrioGap[]): string[] {
+function summarizeTrioGaps(gaps: TrioGap[]): DesignIssue[] {
   if (gaps.length <= MAX_INDIVIDUAL_TRIO_WARNINGS) {
-    return gaps.map((gap) => `${gap.label} ${gap.layerName} layer has no ${gap.missing.join('/')} — ${TRIO_HINT}`);
+    return gaps.map((gap) => designIssue('warning', `${gap.label} ${gap.layerName} layer has no ${gap.missing.join('/')} — ${TRIO_HINT}`));
   }
   const missing = [...new Set(gaps.flatMap((gap) => gap.missing))];
   const examples = gaps.slice(0, 3).map((gap) => gap.label).join(', ');
-  return [`${gaps.length} text layers have no ${missing.join('/')} on them or any parent (e.g. ${examples}) — ${TRIO_HINT}`];
+  return [designIssue('warning', `${gaps.length} text layers have no ${missing.join('/')} on them or any parent (e.g. ${examples}) — ${TRIO_HINT}`)];
 }
 
 const HOVER_HINT = 'give every link and button a hover state (ui_state "hover": color, background, opacity or underline) plus a transition.';
 
-function summarizeMissingHover(labels: string[]): string[] {
+function summarizeMissingHover(labels: string[]): DesignIssue[] {
   if (labels.length === 0) return [];
-  if (labels.length === 1) return [`${labels[0]} is clickable but has no hover state — ${HOVER_HINT}`];
+  if (labels.length === 1) return [designIssue('warning', `${labels[0]} is clickable but has no hover state — ${HOVER_HINT}`)];
   const examples = labels.slice(0, 3).join(', ');
-  return [`${labels.length} clickable layers have no hover state (e.g. ${examples}) — ${HOVER_HINT}`];
+  return [designIssue('warning', `${labels.length} clickable layers have no hover state (e.g. ${examples}) — ${HOVER_HINT}`)];
 }
 
 /** Links and buttons — anything a visitor expects to react on hover. */
@@ -180,7 +201,7 @@ function lintLayer(
   classes: string[],
   effectiveBg: string | null,
   parent: Layer | null,
-  warnings: string[],
+  warnings: DesignIssue[],
 ): void {
   const label = labelOf(layer);
 
@@ -189,13 +210,13 @@ function lintLayer(
     const children = layer.children ?? [];
     const directLeaves = children.filter((child) => CONTENT_LEAF_TYPES.has(child.name));
     if (directLeaves.length > 0) {
-      warnings.push(
+      warnings.push(designIssue('error',
         `${label} section has content (${directLeaves.map((l) => l.name).join(', ')}) directly inside it — wrap it in a container div (maxWidth 1280px, horizontal padding).`,
-      );
+      ));
     } else if (!children.some((child) => hasMaxWidth(child))) {
-      warnings.push(
+      warnings.push(designIssue('warning',
         `${label} section has no container child with maxWidth — content will stretch full-width on large screens.`,
-      );
+      ));
     }
   }
 
@@ -206,9 +227,9 @@ function lintLayer(
     if (color && bg) {
       const ratio = contrastRatio(color, bg);
       if (ratio < 3) {
-        warnings.push(
+        warnings.push(designIssue('error',
           `${label} text contrast is ${ratio.toFixed(1)}:1 against its background — too low to read. Aim for 4.5:1 (3:1 minimum for large headings).`,
-        );
+        ));
       }
     }
   }
@@ -222,18 +243,18 @@ function lintLayer(
       const what = columns !== null && columns !== 1
         ? (columns > 1 ? `a ${columns}-column grid` : 'a multi-column grid')
         : 'divide-* borders';
-      warnings.push(
+      warnings.push(designIssue('error',
         `${label} is a Collection List, which repeats ITSELF once per item — ${what} on it renders once per item. Put display grid / gridTemplateColumns / gap / dividers on the PARENT div and keep only the card styling (padding, background, border) on this layer.`,
-      );
+      ));
     }
   }
 
   // Navigation that hides its links on smaller screens needs a native toggle to show them again.
   const tag = layer.settings?.tag;
   if ((tag === 'nav' || tag === 'header') && hidesLinksOnSmallScreens(layer) && !hasClickInteraction(layer)) {
-    warnings.push(
+    warnings.push(designIssue('error',
       `${label} ${tag} hides links on tablet/mobile but nothing shows them again — add a menu button with a native click interaction (set_layer_interactions: click, yoyo, tween display hidden→visible on the menu panel, apply_styles display "on-load"), like the navigation-001 layout, or re-import with data-ycode-toggle / data-ycode-menu. Never use custom <script> for menus.`,
-    );
+    ));
   }
 
   // Flex container with multiple children but no explicit direction.
@@ -242,7 +263,7 @@ function lintLayer(
     const hasDirection = Boolean(layer.design?.layout?.flexDirection)
       || classes.some((c) => /^flex-(row|col)(-reverse)?$/.test(c));
     if (!hasDirection) {
-      warnings.push(`${label} flex container has no flexDirection — set it explicitly (row or column).`);
+      warnings.push(designIssue('hint', `${label} flex container has no flexDirection — set it explicitly (row or column).`));
     }
   }
 
@@ -254,9 +275,9 @@ function lintLayer(
       || classListOf(parent).some((c) => c === 'items-start' || c === 'items-center' || c === 'items-end')
       || ['start', 'center', 'end'].includes(parent.design?.layout?.alignItems ?? '');
     if (!hugsContent) {
-      warnings.push(
+      warnings.push(designIssue('warning',
         `${label} pill/badge will stretch full-width inside its flex column — set layout.alignSelf "start" or "center" on it.`,
-      );
+      ));
     }
   }
 }

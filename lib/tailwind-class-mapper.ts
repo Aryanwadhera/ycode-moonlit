@@ -265,6 +265,8 @@ const CLASS_PROPERTY_MAP: Record<string, RegExp> = {
   alignItems: /^items-(start|end|center|baseline|stretch)$/,
   alignSelf: /^self-(auto|start|end|center|baseline|stretch)$/,
   alignContent: /^content-(start|end|center|between|around|evenly|stretch)$/,
+  justifyItems: /^justify-items-(start|end|center|stretch)$/,
+  justifySelf: /^justify-self-(auto|start|end|center|stretch)$/,
   // Flex child
   flex: /^flex-(1|auto|initial|none)$/,
   flexGrow: /^(flex-)?grow(-0)?$/,
@@ -374,6 +376,8 @@ const CLASS_PROPERTY_MAP: Record<string, RegExp> = {
   backdropBlur: /^backdrop-blur(-none|-sm|-md|-lg|-xl|-2xl|-3xl|-\[.+\])?$/,
   mixBlendMode: /^mix-blend-(normal|multiply|screen|overlay|darken|lighten|color-dodge|color-burn|hard-light|soft-light|difference|exclusion|hue|saturation|color|luminosity)$/,
   cursor: /^cursor-.+$/,
+  filter: /^(filter-none|filter-\[.+\]|grayscale(-\d+)?|invert(-\d+)?|sepia(-\d+)?|brightness-\d+|contrast-\d+|saturate-\d+|-?hue-rotate-\d+)$/,
+  backdropFilter: /^(backdrop-filter-none|backdrop-filter-\[.+\]|backdrop-(grayscale(-\d+)?|invert(-\d+)?|sepia(-\d+)?|brightness-\d+|contrast-\d+|saturate-\d+|opacity-\d+)|-?backdrop-hue-rotate-\d+)$/,
 
   // Positioning
   position: /^(static|fixed|absolute|relative|sticky)$/,
@@ -750,6 +754,10 @@ export function propertyToClass(
         };
         return `self-${selfMap[value] || value}`;
       }
+      case 'justifyItems':
+        return `justify-items-${value}`;
+      case 'justifySelf':
+        return `justify-self-${value}`;
       case 'alignContent': {
         const contentMap: Record<string, string> = {
           'flex-start': 'start',
@@ -1137,6 +1145,12 @@ export function propertyToClass(
         return `mix-blend-${value}`;
       case 'cursor':
         return `cursor-${value}`;
+      case 'filter':
+        if (value === 'none') return 'filter-none';
+        return `filter-[${value.replace(/\s+/g, '_')}]`;
+      case 'backdropFilter':
+        if (value === 'none') return 'backdrop-filter-none';
+        return `backdrop-filter-[${value.replace(/\s+/g, '_')}]`;
     }
   }
 
@@ -1432,6 +1446,51 @@ export function mergeDesign(existing: Layer['design'] | undefined, parsed: Layer
  * Parse Tailwind classes back to design object
  * Comprehensive parser for all design properties
  */
+/** Tailwind filter utilities that take a bare amount, e.g. brightness-75 → brightness(.75). */
+const SCALED_FILTERS = new Set(['brightness', 'contrast', 'saturate', 'opacity']);
+
+/**
+ * CSS value of a filter utility, or null when `cls` isn't one. `grayscale`,
+ * `invert`, `sepia` default to 100%; `-0` variants switch the effect off.
+ */
+function namedFilterToCss(utility: string): string | null {
+  const arbitrary = /^(?:filter)-\[(.+)\]$/.exec(utility);
+  if (arbitrary) return arbitrary[1].replace(/_/g, ' ');
+  if (utility === 'filter-none') return 'none';
+
+  const toggle = /^(grayscale|invert|sepia)(?:-(\d+))?$/.exec(utility);
+  if (toggle) return `${toggle[1]}(${toggle[2] === undefined ? '100' : toggle[2]}%)`;
+
+  const scaled = /^(brightness|contrast|saturate|opacity)-(\d+)$/.exec(utility);
+  if (scaled && SCALED_FILTERS.has(scaled[1])) return `${scaled[1]}(${Number(scaled[2]) / 100})`;
+
+  const hue = /^(-?)hue-rotate-(\d+)$/.exec(utility);
+  if (hue) return `hue-rotate(${hue[1]}${hue[2]}deg)`;
+
+  return null;
+}
+
+function filterClassToCss(cls: string): string | null {
+  // `opacity-50` is the opacity property, not a filter; only its backdrop form is a filter.
+  if (/^opacity-\d+$/.test(cls)) return null;
+  return namedFilterToCss(cls);
+}
+
+function backdropFilterClassToCss(cls: string): string | null {
+  const arbitrary = /^backdrop-filter-\[(.+)\]$/.exec(cls);
+  if (arbitrary) return arbitrary[1].replace(/_/g, ' ');
+  if (cls === 'backdrop-filter-none') return 'none';
+  const match = /^(-?)backdrop-(.+)$/.exec(cls);
+  if (!match || match[2].startsWith('blur')) return null;
+  return namedFilterToCss(`${match[1]}${match[2]}`);
+}
+
+/** Combine filter functions in class order; `none` resets what came before. */
+function appendFilter(existing: string | undefined, value: string): string {
+  if (value === 'none' || !existing || existing === 'none') return value;
+  return `${existing} ${value}`;
+}
+
 export function classesToDesign(classes: string | string[]): Layer['design'] {
   const classList = Array.isArray(classes) ? classes : classes.split(' ').filter(Boolean);
 
@@ -1508,6 +1567,12 @@ export function classesToDesign(classes: string | string[]): Layer['design'] {
         design.layout!.justifyContent = value;
       }
     }
+
+    // Grid inline-axis alignment
+    const justifyItems = cls.match(CLASS_PROPERTY_MAP.justifyItems);
+    if (justifyItems) design.layout!.justifyItems = justifyItems[1];
+    const justifySelf = cls.match(CLASS_PROPERTY_MAP.justifySelf);
+    if (justifySelf) design.layout!.justifySelf = justifySelf[1];
 
     // Align Items
     if (cls.startsWith('items-')) {
@@ -2019,6 +2084,16 @@ export function classesToDesign(classes: string | string[]): Layer['design'] {
     if (cls.startsWith('cursor-')) {
       const value = cls.slice('cursor-'.length);
       if (value) design.effects!.cursor = value;
+    }
+
+    // Filter / backdrop-filter: several named utilities fold into one CSS value
+    const filterValue = filterClassToCss(cls);
+    if (filterValue !== null) {
+      design.effects!.filter = appendFilter(design.effects!.filter, filterValue);
+    }
+    const backdropFilterValue = backdropFilterClassToCss(cls);
+    if (backdropFilterValue !== null) {
+      design.effects!.backdropFilter = appendFilter(design.effects!.backdropFilter, backdropFilterValue);
     }
 
     // ===== POSITIONING =====
