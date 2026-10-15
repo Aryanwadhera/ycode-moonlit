@@ -395,7 +395,7 @@ const CLASS_PROPERTY_MAP: Record<string, RegExp> = {
   // Transitions
   transitionProperty: /^transition(-all|-colors|-opacity|-shadow|-transform|-none)?$/,
   duration: /^duration-(\[.+\]|\d+)$/,
-  easing: /^ease-(linear|in|out|in-out)$/,
+  easing: /^ease-(linear|in|out|in-out|initial|\[.+\])$/,
   delay: /^delay-(\[.+\]|\d+)$/,
 };
 
@@ -1198,8 +1198,13 @@ export function propertyToClass(
         if (/^\d*\.?\d+$/.test(bare)) return `${prefix}-[${value}ms]`;
         return `${prefix}-[${value}]`;
       }
-      case 'easing':
-        return `ease-${value}`;
+      case 'easing': {
+        // Accept both the stored form ("out") and the CSS/Tailwind form
+        // ("ease-out") so callers can't produce "ease-ease-out".
+        const easing = value.replace(/^ease-/, '');
+        if (['linear', 'in', 'out', 'in-out', 'initial'].includes(easing)) return `ease-${easing}`;
+        return `ease-[${easing.replace(/\s+/g, '_')}]`;
+      }
     }
   }
 
@@ -2126,6 +2131,10 @@ export function classesToDesign(classes: string | string[]): Layer['design'] {
       'ease-linear': 'linear', 'ease-in': 'in', 'ease-out': 'out', 'ease-in-out': 'in-out',
     };
     if (easingMap[cls]) design.transitions!.easing = easingMap[cls];
+    else if (cls.startsWith('ease-[')) {
+      const value = extractArbitraryValue(cls);
+      if (value) design.transitions!.easing = value.replace(/_/g, ' ');
+    }
 
     // Duration & Delay (store raw number; ensureLengthUnit-style adds ms on output)
     for (const [prefix, prop] of [['duration', 'duration'], ['delay', 'delay']] as const) {

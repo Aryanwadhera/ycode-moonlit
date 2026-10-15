@@ -136,6 +136,7 @@ export const TOOL_META: Record<string, ToolMeta> = {
   get_component: read('Get component'),
   add_component_instance: write('Add component instance'),
   replace_layer_with_component: write('Replace layer with component'),
+  replace_component_instances: destructive('Replace component instances site-wide'),
   set_component_instance: write('Set component instance overrides'),
   detach_component_instance: destructive('Detach component instance'),
   reorder_component_variants: write('Reorder component variants'),

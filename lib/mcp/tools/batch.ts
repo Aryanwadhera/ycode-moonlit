@@ -22,6 +22,10 @@ import {
 } from '@/lib/mcp/utils';
 import type { RichTextBlock } from '@/lib/mcp/utils';
 import { getCachedLayers, saveCachedLayers } from '@/lib/mcp/page-layers';
+import { bindLayerToField } from '@/lib/mcp/field-binding';
+import type { FieldCache } from '@/lib/mcp/field-binding';
+import { getCollectionById } from '@/lib/repositories/collectionRepository';
+import { canConvertToCollection } from '@/lib/layer-utils';
 import { broadcastLayersChanged } from '@/lib/mcp/broadcast';
 import { lintDesign } from '@/lib/mcp/design-lint';
 import { collectFontFamiliesFromDesign, ensureFontsInstalled, fontWarnings } from '@/lib/mcp/font-install';
@@ -103,9 +107,31 @@ const setRichTextOp = z.object({
   blocks: z.array(richTextBlockSchema).min(1).describe('Content blocks (paragraph, heading, list, etc.)'),
 });
 
+const bindFieldOp = z.object({
+  type: z.literal('bind_field'),
+  layer_id: z.string().describe('Layer ID or ref_id whose content to bind to a CMS field'),
+  field_id: z.string().describe('Collection field ID'),
+  source: z.enum(['collection', 'page']).default('collection').optional()
+    .describe('"collection" = nearest ancestor Collection List (default); "page" = the dynamic page\'s item'),
+  target: z.enum(['auto', 'src', 'alt', 'poster', 'background']).default('auto').optional()
+    .describe('"auto" picks by layer type (text→text, image/video/audio→src); "alt", "poster" or "background" for those targets'),
+  format: z.string().optional().describe('Optional value format (e.g. a date format)'),
+  prefix: z.string().optional().describe('Text layers: literal text before the value'),
+  suffix: z.string().optional().describe('Text layers: literal text after the value'),
+});
+
+const bindCollectionOp = z.object({
+  type: z.literal('bind_collection'),
+  layer_id: z.string().describe('Collection List layer ID or ref_id (a plain container is converted in place)'),
+  collection_id: z.string().describe('The CMS collection to repeat'),
+  sort_by: z.string().optional().describe('"manual", "random", "none", or a field ID'),
+  sort_order: z.enum(['asc', 'desc']).optional(),
+  limit: z.number().int().positive().optional(),
+});
+
 const operationSchema = z.discriminatedUnion('type', [
   addLayerOp, updateDesignOp, updateTextOp, updateImageOp, deleteLayerOp, moveLayerOp, applyStyleOp, setRichTextOp,
-  updateLinkOp, updateSettingsOp, updateBackgroundImageOp,
+  updateLinkOp, updateSettingsOp, updateBackgroundImageOp, bindCollectionOp, bindFieldOp,
 ]);
 
 function resolveId(id: string, refMap: Map<string, string>): string {
@@ -121,9 +147,12 @@ and one call means one permission prompt in the user's AI client instead of one 
 
 OPERATIONS: add_layer, update_design, update_text, set_rich_text, update_image, update_link,
 update_settings (tag, id, name, hidden, attributes, embed code), update_background_image,
-apply_style, move_layer, delete_layer. Use this whenever a turn touches two or more layers;
-the single-purpose tools are for one-off edits or element-specific settings (slider, lightbox,
-map, options source).
+apply_style, move_layer, delete_layer, bind_collection (bind a Collection List — or convert a
+container into one — to a CMS collection), bind_field (bind text / heading / image / video /
+background to a collection field; same options as bind_layer_field). Use this whenever a turn
+touches two or more layers — including wiring up a whole CMS card in one call — the
+single-purpose tools are for one-off edits or element-specific settings (slider, lightbox, map,
+options source, filters, pagination).
 
 LIMIT: max 50 operations per call — split larger builds into several calls.
 
@@ -163,6 +192,8 @@ EXAMPLE:
       // Custom fontFamily values this batch applies — missing ones are
       // auto-installed from the Google Fonts catalog after the save.
       const fontFamilies = new Set<string>();
+      // Collection fields fetched once per collection for bind_field ops.
+      const fieldCache: FieldCache = new Map();
 
       for (let i = 0; i < operations.length; i++) {
         const op = operations[i];
@@ -315,6 +346,53 @@ EXAMPLE:
               if (!layer) { results.push({ op: i, status: 'error', detail: `Layer "${op.layer_id}" not found` }); continue; }
               layers = updateLayerById(layers, layerId, (l) => ({ ...l, styleId: op.style_id }));
               results.push({ op: i, status: 'ok', detail: `Applied style to "${layer.customName || layer.name}"` });
+              break;
+            }
+
+            case 'bind_collection': {
+              const layerId = resolveId(op.layer_id, refMap);
+              const layer = findLayerById(layers, layerId);
+              if (!layer) { results.push({ op: i, status: 'error', detail: `Layer "${op.layer_id}" not found` }); continue; }
+              const existing = layer.variables?.collection;
+              if (!existing && !canConvertToCollection(layer)) {
+                results.push({ op: i, status: 'error', detail: `"${layer.customName || layer.name}" cannot become a Collection List — use a plain container div` });
+                continue;
+              }
+              const collection = await getCollectionById(op.collection_id);
+              if (!collection) { results.push({ op: i, status: 'error', detail: `Collection "${op.collection_id}" not found` }); continue; }
+              const collectionChanged = !!existing?.id && existing.id !== op.collection_id;
+              layers = updateLayerById(layers, layerId, (l) => {
+                const next = {
+                  ...l.variables?.collection,
+                  id: op.collection_id,
+                  ...(op.sort_by !== undefined ? { sort_by: op.sort_by } : {}),
+                  ...(op.sort_order !== undefined ? { sort_order: op.sort_order } : {}),
+                  ...(op.limit !== undefined ? { limit: op.limit } : {}),
+                };
+                // Filters reference the previous collection's fields — drop them on a switch.
+                if (collectionChanged) delete next.filters;
+                return { ...l, variables: { ...l.variables, collection: next } };
+              });
+              touchedIds.add(layerId);
+              results.push({ op: i, status: 'ok', detail: `${existing ? 'Bound' : 'Converted and bound'} "${layer.customName || layer.name}" to collection "${collection.name}"` });
+              break;
+            }
+
+            case 'bind_field': {
+              const layerId = resolveId(op.layer_id, refMap);
+              const layer = findLayerById(layers, layerId);
+              if (!layer) { results.push({ op: i, status: 'error', detail: `Layer "${op.layer_id}" not found` }); continue; }
+              const bound = await bindLayerToField(layers, layer, page_id, {
+                field_id: op.field_id,
+                source: op.source ?? 'collection',
+                target: op.target ?? 'auto',
+                format: op.format,
+                prefix: op.prefix,
+                suffix: op.suffix,
+              }, fieldCache);
+              if ('error' in bound) { results.push({ op: i, status: 'error', detail: bound.error }); continue; }
+              layers = updateLayerById(layers, layerId, () => bound.layer);
+              results.push({ op: i, status: 'ok', detail: `Bound ${bound.summary} on "${layer.customName || layer.name}"` });
               break;
             }
 

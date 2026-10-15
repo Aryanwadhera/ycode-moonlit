@@ -1001,7 +1001,7 @@ export const ELEMENT_TEMPLATES: Record<string, ElementTemplateEntry> = {
   },
   collection: {
     name: 'Collection List',
-    description: 'CMS collection list — repeats its children for each item in the bound collection. Bind to a collection after adding.',
+    description: 'CMS collection list — the REPEATED ITEM: this layer and its children are cloned once per item of the bound collection. Add it inside a parent div that holds the list layout (grid / gap); style this layer as the card. Bind with bind_collection_layer after adding.',
     useBlocksTemplate: true,
   },
   select: {

@@ -38,7 +38,7 @@ test('warns about everything dropped or converted lossily', () => {
     <div class="space-y-4 md:text-[20px] group-hover:opacity-50" data-test="x">
       <img src="/hero.png" alt="Hero">
       <p>Hello <span class="text-[#f00]">world</span></p>
-      <select name="plan"><option>Pro</option></select>
+      <progress value="1"></progress>
       <custom-el>hi</custom-el>
       <a href="#pricing">Pricing</a>
       <div style="--brand: red; color: #111">x</div>
@@ -52,10 +52,40 @@ test('warns about everything dropped or converted lossily', () => {
   expectSome(/Attributes dropped from <div>: data-test/);
   expectSome(/<img> src "\/hero.png" is not an absolute URL/);
   expectSome(/Inline <span> inside text lost its class/);
-  expectSome(/<select> options were not imported/);
+  expectSome(/<progress> was imported as a plain div/);
   expectSome(/Unknown tag <custom-el>/);
   expectSome(/Link "#pricing" has no element with id "pricing"/);
   expectSome(/Inline style "--brand: red" was dropped/);
+});
+
+test('keeps accessibility and form-field attributes', () => {
+  const { layers, warnings } = htmlToLayersOnServer(`
+    <form>
+      <button type="button" aria-label="Open menu" aria-expanded="false">☰</button>
+      <label>Name <input type="text" name="name" required autocomplete="name" placeholder="Jane"></label>
+      <select name="plan" required>
+        <option value="" disabled selected hidden>Pick a plan</option>
+        <option value="pro">Pro</option>
+      </select>
+    </form>`);
+
+  const [button, labelWrap, select] = layers[0].children as Layer[];
+  assert.equal(button.attributes?.type, 'button');
+  assert.deepEqual(button.settings?.customAttributes, { 'aria-label': 'Open menu', 'aria-expanded': 'false' });
+
+  assert.equal(labelWrap.name, 'div');
+  assert.equal(labelWrap.settings?.tag, 'label');
+  const [labelText, input] = labelWrap.children as Layer[];
+  assert.equal(labelText.name, 'text');
+  assert.deepEqual(input.attributes, { type: 'text', name: 'name', placeholder: 'Jane', autocomplete: 'name', required: true });
+
+  assert.equal(select.attributes?.required, true);
+  const [placeholder, pro] = select.children as Layer[];
+  assert.equal(placeholder.name, 'option');
+  assert.equal(placeholder.settings?.isPlaceholder, true);
+  assert.equal(pro.attributes?.value, 'pro');
+  assert.equal(pro.variables?.text?.data.content, 'Pro');
+  assert.deepEqual(warnings, []);
 });
 
 test('does not flag scale utilities the design panel understands', () => {

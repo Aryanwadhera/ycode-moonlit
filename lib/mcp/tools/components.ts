@@ -39,6 +39,8 @@ import { stringToTiptapContent } from '@/lib/text-format-utils';
 import { collectFontFamiliesFromDesign, ensureFontsInstalled, fontWarnings } from '@/lib/mcp/font-install';
 import { getCachedLayers as getPageLayers, saveCachedLayers } from '@/lib/mcp/page-layers';
 import { getAllPages } from '@/lib/repositories/pageRepository';
+import { getAllDraftLayers } from '@/lib/repositories/pageLayersRepository';
+import { hasLayerQuery, queryLayers } from '@/lib/mcp/layer-query';
 import {
   broadcastComponentCreated,
   broadcastComponentUpdated,
@@ -100,25 +102,83 @@ function normalizeVariables(input: Array<z.infer<typeof variableUpdateSchema>>):
   }));
 }
 
+interface InstanceRef {
+  page_id: string;
+  layer_id: string;
+}
+
+/** Every component instance on every draft page, keyed by component id. */
+function collectInstancesByComponent(pages: Array<{ page_id: string; layers: Layer[] }>): Map<string, InstanceRef[]> {
+  const byComponent = new Map<string, InstanceRef[]>();
+  const walk = (layer: Layer, pageId: string) => {
+    if (layer.componentId) {
+      const list = byComponent.get(layer.componentId) ?? [];
+      list.push({ page_id: pageId, layer_id: layer.id });
+      byComponent.set(layer.componentId, list);
+    }
+    for (const child of layer.children ?? []) walk(child, pageId);
+  };
+  for (const page of pages) {
+    for (const layer of page.layers) walk(layer, page.page_id);
+  }
+  return byComponent;
+}
+
+/** Swaps every instance of `fromId` in a tree for `toId`, clearing variant/override state that belongs to the old component. */
+function swapComponentInstances(layers: Layer[], fromId: string, toId: string, toName: string): { layers: Layer[]; swapped: string[] } {
+  const swapped: string[] = [];
+  const walk = (layer: Layer): Layer => {
+    const children = layer.children ? layer.children.map(walk) : layer.children;
+    if (layer.componentId !== fromId) {
+      return children === layer.children ? layer : { ...layer, children };
+    }
+    swapped.push(layer.id);
+    const { componentVariantId: _variant, componentVariantVariableId: _variantVar, componentOverrides: _overrides, ...rest } = layer;
+    void _variant; void _variantVar; void _overrides;
+    return { ...rest, componentId: toId, customName: toName, children };
+  };
+  return { layers: layers.map(walk), swapped };
+}
+
 export function registerComponentTools(server: McpServer) {
   server.tool(
     'list_components',
-    'List all reusable components with their variables. has_published_version tells whether the component is live; has_unpublished_changes tells whether publishing would change it (same check as get_unpublished_changes).',
-    {},
-    async () => {
-      const [components, published] = await Promise.all([
+    `List all reusable components with their variables and where they are used.
+has_published_version tells whether the component is live; has_unpublished_changes tells whether
+publishing would change it (same check as get_unpublished_changes). usage lists the draft pages
+(page_id + instance layer_ids) that render the component — use it to find every instance
+before editing or swapping a component (see replace_component_instances).`,
+    {
+      include_usage: z.boolean().optional().default(true)
+        .describe('Include per-component usage (pages and instance layer ids). Pass false for a lighter listing.'),
+    },
+    async ({ include_usage }) => {
+      const [components, published, draftPages] = await Promise.all([
         getAllComponents(false),
         getAllComponents(true),
+        include_usage ? getAllDraftLayers() : Promise.resolve([]),
       ]);
       const publishedHashById = new Map(published.map((c) => [c.id, c.content_hash]));
-      const summary = components.map((c) => ({
-        id: c.id,
-        name: c.name,
-        variables: c.variables || [],
-        layer_count: countLayers(c.layers),
-        has_published_version: publishedHashById.has(c.id),
-        has_unpublished_changes: !publishedHashById.has(c.id) || publishedHashById.get(c.id) !== c.content_hash,
-      }));
+      const instances = collectInstancesByComponent(
+        draftPages.map((p) => ({ page_id: p.page_id, layers: (p.layers as Layer[]) || [] })),
+      );
+      const summary = components.map((c) => {
+        const refs = instances.get(c.id) ?? [];
+        const byPage = new Map<string, string[]>();
+        for (const ref of refs) byPage.set(ref.page_id, [...(byPage.get(ref.page_id) ?? []), ref.layer_id]);
+        return {
+          id: c.id,
+          name: c.name,
+          variables: c.variables || [],
+          layer_count: countLayers(c.layers),
+          has_published_version: publishedHashById.has(c.id),
+          has_unpublished_changes: !publishedHashById.has(c.id) || publishedHashById.get(c.id) !== c.content_hash,
+          ...(include_usage ? {
+            instance_count: refs.length,
+            usage: [...byPage.entries()].map(([page_id, layer_ids]) => ({ page_id, layer_ids })),
+          } : {}),
+        };
+      });
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(summary) }],
       };
@@ -126,10 +186,71 @@ export function registerComponentTools(server: McpServer) {
   );
 
   server.tool(
+    'replace_component_instances',
+    `Swap EVERY instance of one component for another across all draft pages in one call (e.g.
+after rebuilding "Navigation" as "Navigation v2"). Each instance keeps its position; variant
+selection and per-instance overrides are reset because they belong to the old component.
+Optionally deletes the old component afterwards. Only page instances are swapped — instances
+nested inside another component's master must be updated with update_component_layers.
+Prefer this over get_layers + replace_layer_with_component page by page.`,
+    {
+      from_component_id: z.string().describe('Component whose instances should be replaced'),
+      to_component_id: z.string().describe('Component to render instead'),
+      delete_old: z.boolean().optional().default(false).describe('Delete from_component_id once no page uses it anymore'),
+    },
+    async ({ from_component_id, to_component_id, delete_old }) => {
+      if (from_component_id === to_component_id) {
+        return { content: [{ type: 'text' as const, text: 'Error: from_component_id and to_component_id are the same component.' }], isError: true };
+      }
+      const [from, to] = await Promise.all([getComponentById(from_component_id), getComponentById(to_component_id)]);
+      if (!from) return { content: [{ type: 'text' as const, text: `Error: Component "${from_component_id}" not found.` }], isError: true };
+      if (!to) return { content: [{ type: 'text' as const, text: `Error: Component "${to_component_id}" not found.` }], isError: true };
+
+      const draftPages = await getAllDraftLayers();
+      const updatedPages: Array<{ page_id: string; layer_ids: string[] }> = [];
+      for (const page of draftPages) {
+        const { layers, swapped } = swapComponentInstances((page.layers as Layer[]) || [], from_component_id, to_component_id, to.name);
+        if (swapped.length === 0) continue;
+        await saveCachedLayers(page.page_id, layers);
+        updatedPages.push({ page_id: page.page_id, layer_ids: swapped });
+      }
+
+      let deleted = false;
+      if (delete_old) {
+        await softDeleteComponent(from_component_id);
+        broadcastComponentDeleted(from_component_id).catch(() => {});
+        deleted = true;
+      }
+
+      const total = updatedPages.reduce((n, p) => n + p.layer_ids.length, 0);
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({
+            message: `Replaced ${total} instance(s) of "${from.name}" with "${to.name}" on ${updatedPages.length} page(s)${deleted ? `; deleted "${from.name}"` : ''}`,
+            pages: updatedPages,
+            old_component_deleted: deleted,
+          }),
+        }],
+      };
+    },
+  );
+
+  server.tool(
     'get_component',
-    'Get a component by ID, including its full layer tree and variables',
-    { component_id: z.string().describe('The component ID') },
-    async ({ component_id }) => {
+    `Get a component by ID: its variables and the layer tree of each variant (variants[0] is the
+primary variant; the first variant's tree is what instances render by default).
+
+On large components, read in pieces like get_layers: fields "summary" returns only id, name,
+customName, tag, text, link, classes and componentId per layer; depth limits how many levels of
+children are included (deeper levels become children_count); variant_id returns one variant.`,
+    {
+      component_id: z.string().describe('The component ID'),
+      variant_id: z.string().optional().describe('Return only this variant\'s layers'),
+      depth: z.number().int().min(0).optional().describe('Levels of children to include below each root layer'),
+      fields: z.enum(['full', 'summary']).optional().describe('"summary" for a compact view; default "full"'),
+    },
+    async ({ component_id, variant_id, depth, fields }) => {
       const component = await getComponentById(component_id);
       if (!component) {
         return {
@@ -137,8 +258,33 @@ export function registerComponentTools(server: McpServer) {
           isError: true,
         };
       }
+
+      const variants: ComponentVariant[] = (component.variants && component.variants.length > 0)
+        ? component.variants
+        : [{ id: 'default', name: 'Default', layers: component.layers || [] }];
+      const selected = variant_id ? variants.filter((v) => v.id === variant_id) : variants;
+      if (selected.length === 0) {
+        return { content: [{ type: 'text' as const, text: `Error: Variant "${variant_id}" not found.` }], isError: true };
+      }
+
+      const shape = (layers: Layer[]) => {
+        const query = { depth, fields };
+        if (!hasLayerQuery(query)) return layers;
+        const result = queryLayers(layers, query);
+        return 'layers' in result ? result.layers : layers;
+      };
+
+      // `layers` mirrors variants[0].layers in storage; return the tree once per variant.
+      const { layers: _legacyLayers, ...rest } = component;
+      void _legacyLayers;
       return {
-        content: [{ type: 'text' as const, text: JSON.stringify(component) }],
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({
+            ...rest,
+            variants: selected.map((v) => ({ ...v, layers: shape(v.layers || []) })),
+          }),
+        }],
       };
     },
   );
@@ -150,8 +296,9 @@ references the component and shares its structure). Prefer this over rebuilding 
 component's markup by hand.
 
 The instance renders the master component's layer tree; its children are read-only
-(edit the master component to change the structure). Per-instance content overrides
-are not settable here yet, so the instance shows the component's default content.
+(edit the master component to change the structure). A fresh instance shows the
+component's default content — use set_component_instance afterwards to override its
+variables (text, image, link, …) or switch its variant.
 
 Use replace_layer_with_component instead when swapping an existing layer for a component.`,
     {
@@ -200,8 +347,8 @@ Use replace_layer_with_component instead when swapping an existing layer for a c
 Use this when the user wants to reuse a component "instead of" an existing layer.
 
 The replaced layer becomes a real component instance rendering the master's layer tree;
-its children are read-only (edit the master component to change the structure). Per-instance
-content overrides are not settable here yet, so it shows the component's default content.`,
+its children are read-only (edit the master component to change the structure). It shows the
+component's default content — use set_component_instance to override its variables or variant.`,
     {
       page_id: z.string().describe('The page ID'),
       layer_id: z.string().describe('ID of the layer to replace with a component instance'),

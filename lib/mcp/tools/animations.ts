@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
-import type { Layer, LayerInteraction } from '@/types';
-import { getCachedLayers as getPageLayers, saveCachedLayers } from '@/lib/mcp/page-layers';
+import type { LayerInteraction } from '@/types';
+import { LAYER_SCOPE_HINT, resolveLayerScope } from '@/lib/mcp/layer-scope';
 import { findLayerById, updateLayerById, generateId } from '@/lib/mcp/utils';
 import {
   ANIMATION_EASES,
@@ -10,9 +10,12 @@ import {
   buildInteractionFromPreset,
 } from '@/lib/mcp/animation-presets';
 
-async function savePageLayers(pageId: string, layers: Layer[]): Promise<void> {
-  await saveCachedLayers(pageId, layers);
-}
+/** Where the layer lives: a page, or a component master (optionally one variant). */
+const scopeSchema = {
+  page_id: z.string().optional().describe('The page ID (for layers on a page)'),
+  component_id: z.string().optional().describe('The component ID (for layers inside a component master, e.g. a navbar menu toggle). Use instead of page_id.'),
+  variant_id: z.string().optional().describe('With component_id: the variant whose layers to edit. Omit for the primary variant.'),
+};
 
 const presetEnum = z.enum(ANIMATION_PRESETS);
 const triggerEnum = z.enum(['click', 'hover', 'scroll-into-view', 'while-scrolling', 'load']);
@@ -91,6 +94,9 @@ export function registerAnimationTools(server: McpServer) {
     `Add a curated animation to a layer using one of Ycode's preset patterns.
 
 Presets cover ~80% of animation needs. Use set_layer_interactions for full GSAP control.
+Works on page layers (page_id) and on layers inside a component master (component_id +
+optional variant_id) — e.g. a hover effect on a shared card, or a menu toggle in a navbar
+component — without detaching or rebuilding the component.
 
 PRESETS:
 - Reveal (default trigger scroll-into-view): fade-in, fade-in-up, fade-in-down,
@@ -113,7 +119,7 @@ Options vary by preset:
 - stagger — scroll-reveal-stagger (seconds between targets, default 0.1)
 - repeat — override the preset's default repeat (e.g. force loop-spin to play 3 times)`,
     {
-      page_id: z.string().describe('The page ID'),
+      ...scopeSchema,
       layer_id: z.string().describe('Layer that owns the animation (and the default target)'),
       preset: presetEnum,
       trigger: triggerEnum.optional()
@@ -131,8 +137,12 @@ Options vary by preset:
         repeat: z.number().optional(),
       }).optional(),
     },
-    async ({ page_id, layer_id, preset, trigger, targets, options }) => {
-      const layers = await getPageLayers(page_id);
+    async ({ page_id, component_id, variant_id, layer_id, preset, trigger, targets, options }) => {
+      const scope = await resolveLayerScope({ page_id, component_id, variant_id });
+      if ('error' in scope) {
+        return { content: [{ type: 'text' as const, text: `Error: ${scope.error}` }], isError: true };
+      }
+      const { layers } = scope;
       const owner = findLayerById(layers, layer_id);
       if (!owner) {
         return { content: [{ type: 'text' as const, text: `Error: Layer "${layer_id}" not found.` }], isError: true };
@@ -159,12 +169,12 @@ Options vary by preset:
         interactions: [...(l.interactions || []), interaction],
       }));
 
-      await savePageLayers(page_id, updated);
+      await scope.save(updated);
       return {
         content: [{
           type: 'text' as const,
           text: JSON.stringify({
-            message: `Added "${preset}" animation to "${owner.customName || owner.name}"`,
+            message: `Added "${preset}" animation to "${owner.customName || owner.name}" on ${scope.label}`,
             interaction_id: interaction.id,
             tween_count: interaction.tweens.length,
           }),
@@ -175,14 +185,17 @@ Options vary by preset:
 
   server.tool(
     'list_layer_animations',
-    'List all animations attached to a layer with their triggers and tween summaries.',
+    `List all animations attached to a layer with their triggers and tween summaries. ${LAYER_SCOPE_HINT}`,
     {
-      page_id: z.string().describe('The page ID'),
+      ...scopeSchema,
       layer_id: z.string().describe('The layer ID'),
     },
-    async ({ page_id, layer_id }) => {
-      const layers = await getPageLayers(page_id);
-      const layer = findLayerById(layers, layer_id);
+    async ({ page_id, component_id, variant_id, layer_id }) => {
+      const scope = await resolveLayerScope({ page_id, component_id, variant_id });
+      if ('error' in scope) {
+        return { content: [{ type: 'text' as const, text: `Error: ${scope.error}` }], isError: true };
+      }
+      const layer = findLayerById(scope.layers, layer_id);
       if (!layer) {
         return { content: [{ type: 'text' as const, text: `Error: Layer "${layer_id}" not found.` }], isError: true };
       }
@@ -199,14 +212,18 @@ Options vary by preset:
 
   server.tool(
     'remove_layer_animation',
-    'Remove a single animation from a layer by its interaction ID.',
+    `Remove a single animation from a layer by its interaction ID. ${LAYER_SCOPE_HINT}`,
     {
-      page_id: z.string().describe('The page ID'),
+      ...scopeSchema,
       layer_id: z.string().describe('The layer ID'),
       interaction_id: z.string().describe('The interaction ID to remove'),
     },
-    async ({ page_id, layer_id, interaction_id }) => {
-      const layers = await getPageLayers(page_id);
+    async ({ page_id, component_id, variant_id, layer_id, interaction_id }) => {
+      const scope = await resolveLayerScope({ page_id, component_id, variant_id });
+      if ('error' in scope) {
+        return { content: [{ type: 'text' as const, text: `Error: ${scope.error}` }], isError: true };
+      }
+      const { layers } = scope;
       const layer = findLayerById(layers, layer_id);
       if (!layer) {
         return { content: [{ type: 'text' as const, text: `Error: Layer "${layer_id}" not found.` }], isError: true };
@@ -218,27 +235,31 @@ Options vary by preset:
       }
 
       const updated = updateLayerById(layers, layer_id, (l) => ({ ...l, interactions: next }));
-      await savePageLayers(page_id, updated);
+      await scope.save(updated);
       return { content: [{ type: 'text' as const, text: `Removed interaction "${interaction_id}"` }] };
     },
   );
 
   server.tool(
     'clear_layer_animations',
-    'Remove all animations from a layer.',
+    `Remove all animations from a layer. ${LAYER_SCOPE_HINT}`,
     {
-      page_id: z.string().describe('The page ID'),
+      ...scopeSchema,
       layer_id: z.string().describe('The layer ID'),
     },
-    async ({ page_id, layer_id }) => {
-      const layers = await getPageLayers(page_id);
+    async ({ page_id, component_id, variant_id, layer_id }) => {
+      const scope = await resolveLayerScope({ page_id, component_id, variant_id });
+      if ('error' in scope) {
+        return { content: [{ type: 'text' as const, text: `Error: ${scope.error}` }], isError: true };
+      }
+      const { layers } = scope;
       const layer = findLayerById(layers, layer_id);
       if (!layer) {
         return { content: [{ type: 'text' as const, text: `Error: Layer "${layer_id}" not found.` }], isError: true };
       }
       const removed = (layer.interactions || []).length;
       const updated = updateLayerById(layers, layer_id, (l) => ({ ...l, interactions: [] }));
-      await savePageLayers(page_id, updated);
+      await scope.save(updated);
       return { content: [{ type: 'text' as const, text: `Cleared ${removed} animation(s) from "${layer.customName || layer.name}"` }] };
     },
   );
@@ -250,6 +271,7 @@ shape. Use when add_animation's presets aren't expressive enough — custom time
 exotic eases, per-property apply_styles, multi-target stagger compositions, etc.
 
 Refer to ycode://reference/animation-presets for the preset catalog and trigger semantics.
+${LAYER_SCOPE_HINT} Tween layer_ids must belong to the same page or component.
 
 Each interaction has:
 - trigger: click | hover | scroll-into-view | while-scrolling | load
@@ -273,13 +295,17 @@ Tween value formats:
 
 position can be a number (seconds), ">" (after previous), or "<" (with previous).`,
     {
-      page_id: z.string().describe('The page ID'),
+      ...scopeSchema,
       layer_id: z.string().describe('The layer ID'),
       interactions: z.array(interactionSchema)
         .describe('Replaces the entire interactions array. Pass [] to clear (or use clear_layer_animations).'),
     },
-    async ({ page_id, layer_id, interactions }) => {
-      const layers = await getPageLayers(page_id);
+    async ({ page_id, component_id, variant_id, layer_id, interactions }) => {
+      const scope = await resolveLayerScope({ page_id, component_id, variant_id });
+      if ('error' in scope) {
+        return { content: [{ type: 'text' as const, text: `Error: ${scope.error}` }], isError: true };
+      }
+      const { layers } = scope;
       const layer = findLayerById(layers, layer_id);
       if (!layer) {
         return { content: [{ type: 'text' as const, text: `Error: Layer "${layer_id}" not found.` }], isError: true };
@@ -288,13 +314,13 @@ position can be a number (seconds), ">" (after previous), or "<" (with previous)
       const normalized = interactions.map(ensureIds);
 
       const updated = updateLayerById(layers, layer_id, (l) => ({ ...l, interactions: normalized }));
-      await savePageLayers(page_id, updated);
+      await scope.save(updated);
 
       return {
         content: [{
           type: 'text' as const,
           text: JSON.stringify({
-            message: `Set ${normalized.length} interaction(s) on "${layer.customName || layer.name}"`,
+            message: `Set ${normalized.length} interaction(s) on "${layer.customName || layer.name}" on ${scope.label}`,
             interaction_ids: normalized.map((i) => i.id),
           }),
         }],

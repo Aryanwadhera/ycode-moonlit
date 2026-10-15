@@ -24,10 +24,11 @@ import { buildAssetUrlMap, collectLayerAssetIds } from '@/lib/asset-utils';
 import { layerToExportHtml } from '@/lib/html-layer-converter';
 import { findLayersWithAnchorId } from '@/lib/layer-utils';
 import { getAssetsByIds } from '@/lib/repositories/assetRepository';
+import { getComponentNames } from '@/lib/repositories/componentRepository';
 import { getAllDraftPageFolders } from '@/lib/repositories/pageFolderRepository';
 import { getAllDraftPages } from '@/lib/repositories/pageRepository';
 import { collectFontFamiliesFromDesign, ensureFontsInstalled, fontWarnings } from '@/lib/mcp/font-install';
-import { hasLayerQuery, MAX_SEARCH_MATCHES, queryLayers } from '@/lib/mcp/layer-query';
+import { hasComponentInstances, hasLayerQuery, labelComponentInstances, MAX_SEARCH_MATCHES, queryLayers } from '@/lib/mcp/layer-query';
 import { getCachedLayers as getPageLayers, saveCachedLayers } from '@/lib/mcp/page-layers';
 import { designSchema, richTextBlockSchema, templateEnum } from './shared-schemas';
 
@@ -58,7 +59,10 @@ Typical flow: fields "summary" + depth 2 for an overview, then layer_id for the 
       fields: z.enum(['full', 'summary']).optional().describe('"summary" for a compact view; default "full"'),
     },
     async ({ page_id, layer_id, depth, search, fields }) => {
-      const layers = await getPageLayers(page_id);
+      let layers = await getPageLayers(page_id);
+      if (hasComponentInstances(layers)) {
+        layers = labelComponentInstances(layers, await getComponentNames());
+      }
       const query = { layerId: layer_id, depth, search, fields };
       if (!hasLayerQuery(query)) {
         return { content: [{ type: 'text' as const, text: JSON.stringify(layers) }] };

@@ -62,3 +62,20 @@ test('null design values remove the desktop class only', () => {
   assert.ok(!classes.includes('text-[14px]'));
   assert.ok(classes.includes('max-md:text-[12px]'));
 });
+
+test('transition easing accepts both "out" and "ease-out" and never doubles the prefix', () => {
+  const base: Layer = { id: 'btn', name: 'button', classes: '' };
+  const named = classList(applyDesignToLayer(base, {
+    transitions: { isActive: true, easing: 'ease-out', duration: '200ms' },
+  }));
+  assert.ok(named.includes('ease-out'), named.join(' '));
+  assert.ok(!named.some((cls) => cls.startsWith('ease-ease')));
+
+  const stored = classList(applyDesignToLayer(base, { transitions: { isActive: true, easing: 'in-out' } }));
+  assert.ok(stored.includes('ease-in-out'), stored.join(' '));
+
+  const custom = classList(applyDesignToLayer(base, {
+    transitions: { isActive: true, easing: 'cubic-bezier(0.4, 0, 0.2, 1)' },
+  }));
+  assert.ok(custom.includes('ease-[cubic-bezier(0.4,_0,_0.2,_1)]'), custom.join(' '));
+});

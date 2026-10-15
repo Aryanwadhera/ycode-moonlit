@@ -262,6 +262,16 @@ expandable menus, accordions) use set_layer_interactions — its description has
 add_layout("navigation-002") ship a responsive header with a working mobile menu toggle.
 Reuse and customize one instead of building the toggle by hand.
 
+**Mobile menus are mandatory and must be native.** Every navigation whose links are hidden
+on tablet/mobile (max-lg:hidden / max-md:hidden) MUST have a menu button with the native
+click interaction that shows them again — the same pattern navigation-001 uses:
+set_layer_interactions on the button with trigger "click", timeline.yoyo true,
+breakpoints ["tablet", "mobile"], one tween targeting the menu panel animating display
+"hidden" → "visible" with apply_styles { display: "on-load" }. NEVER implement a menu with
+a custom <script>, htmlEmbed or CSS toggle — it is not editable in Ycode. Give the button an
+aria-label (update_layer_settings custom_attributes). Interactions work inside component
+masters too: pass component_id instead of page_id to add_animation / set_layer_interactions.
+
 ### Components (Reusable Elements)
 
 Components are reusable layer trees instanced across pages; instances share the master's
@@ -274,10 +284,13 @@ the component tools.
 ### CMS / Collections
 
 Collections are like database tables (create_collection → add_collection_field →
-create_collection_item). A \`collection\` element on a page repeats its children once per
-item, with field binding, filtering, sorting, and pagination. Detailed instructions (field
-value formats, binding, filters, dynamic pages, conditional visibility) arrive with the
-CMS tools.
+create_collection_item). A \`collection\` element on a page is the REPEATED ITEM: the layer
+itself (with its classes) is cloned once per item, together with its children. So the
+collection layer is the card, not the list container — put the list layout (display grid,
+gridTemplateColumns, gap, dividers) on its PARENT div and only card styling on the
+collection layer. Field binding, filtering, sorting, and pagination live on the collection
+layer. Detailed instructions (field value formats, binding, filters, dynamic pages,
+conditional visibility) arrive with the CMS tools.
 
 ### Color Variables (Design Tokens)
 
@@ -515,6 +528,9 @@ missing typography, low contrast) — fix every warning in your next batch befor
 - **NEVER** create more than 4-5 different font sizes on a page — maintain typographic hierarchy
 - **NEVER** build form fields from \`div\`, styled \`text\`, or \`htmlEmbed\` — only native form elements are wired for submission and validation
 - **NEVER** leave a badge, pill, tag, or button stretched full-width inside a flex column — set alignSelf "start"/"center" on it (see layout.alignSelf); padding + borderRadius alone will NOT fix this
+- **NEVER** ship a link, button or clickable card without a hover state and a transition — set ui_state "hover" (color, background, opacity or underline) plus transitions (duration "200ms"); nav links also get ui_state "current"
+- **NEVER** put the list grid (gridTemplateColumns / gap / dividers) on a \`collection\` layer — it repeats per item; the grid belongs on its parent div
+- **NEVER** hide navigation links on tablet/mobile without a menu button wired with the native click interaction (see Animations & Interactions); never a custom <script> menu
 
 ### Typography Rules
 
@@ -575,7 +591,7 @@ The values below are the safe defaults:
 - **Text shadow**: typography.textShadow "0px_1px_2px_rgba(0,0,0,0.4)" when light text sits on a light background
 - **Cursor**: effects.cursor "pointer" on buttons, links, and other clickable layers
 - **Subtle borders**: borderWidth "1px", borderColor "rgba(0,0,0,0.06)"
-- **Button hover**: Use ui_state "hover" to darken background or add shadow
+- **Hover + transition on everything clickable**: every link, button, card link and footer link gets ui_state "hover" (darker background, color shift, opacity or underline) and transitions { transitionProperty "colors"/"all", duration "200ms" }; nav links also get ui_state "current" for the active page. Hover states carry over from HTML import (hover: classes) — missing ones show up as design_warnings
 - **Image aspect ratios**: Use aspectRatio "16/9" or "3/2" with objectFit "cover"
 
 ### Responsive Strategy
@@ -672,15 +688,21 @@ type, and key — the value format depends on the type (see create_collection_it
 description). rich_text fields take a **markdown string** (converted to Tiptap
 automatically); never raw HTML or plain text expecting formatting.
 
-**Collection lists on a page** — a \`collection\` element repeats its children once per item:
+**Collection lists on a page** — a \`collection\` element is cloned once per item (it IS the
+repeated card; its parent div is the list container that holds the grid/gap):
 
+0. **Structure**: parent div (display grid / flex, gridTemplateColumns, gap) → collection
+   layer (card: padding, background, border, radius) → bound children. A grid on the
+   collection layer itself renders one grid per item — batch_operations warns about this.
 1. **Bind** the list with bind_collection_layer (collection, sorting, limit, pagination;
    also nested lists sourced from a reference field, and visitor-controlled sort inputs).
 2. **Filter** which items render with set_collection_filters (groups AND'd, conditions
    within a group OR'd; supports the current-page item on dynamic pages and visitor-facing
    filter inputs).
-3. **Bind child elements to fields** with bind_layer_field (text, image src/alt, video,
-   background). For multi-field text in one node ("$" + price + " / mo") use set_dynamic_text.
+3. **Bind child elements to fields** with bind_layer_field (text, heading, image src/alt, video,
+   background) — or, when wiring several layers, the \`bind_field\` / \`bind_collection\` ops in
+   ONE batch_operations call. For multi-field text in one node ("$" + price + " / mo") use
+   set_dynamic_text.
 4. **Link a card to the item's page:** update_layer_link with link_type "page",
    page_id_target = the dynamic page, and NO collection_item_id — it resolves per item.
 
