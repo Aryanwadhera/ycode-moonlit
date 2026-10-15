@@ -278,6 +278,7 @@ WHAT GETS BOUND (by layer type):
 - text / heading / richText → the text content (optionally wrapped with prefix/suffix, e.g. "By " + Author)
 - image → the image src (or target "alt" for alt text)
 - video / audio → the media src (video also supports target "poster")
+- button / a / any linked layer → the link href, from a link, email or phone field
 - any layer with target "background" → the background image
 
 The field must exist in the relevant collection: for source "collection" that's the collection bound to

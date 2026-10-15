@@ -232,7 +232,7 @@ function lintLayer(
   const tag = layer.settings?.tag;
   if ((tag === 'nav' || tag === 'header') && hidesLinksOnSmallScreens(layer) && !hasClickInteraction(layer)) {
     warnings.push(
-      `${label} ${tag} hides links on tablet/mobile but nothing shows them again — add a menu button with a native click interaction (set_layer_interactions: click, yoyo, tween display hidden→visible on the menu panel, apply_styles display "on-load"), like the navigation-001 layout. Never use custom <script> for menus.`,
+      `${label} ${tag} hides links on tablet/mobile but nothing shows them again — add a menu button with a native click interaction (set_layer_interactions: click, yoyo, tween display hidden→visible on the menu panel, apply_styles display "on-load"), like the navigation-001 layout, or re-import with data-ycode-toggle / data-ycode-menu. Never use custom <script> for menus.`,
     );
   }
 
