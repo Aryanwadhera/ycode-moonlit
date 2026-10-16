@@ -46,6 +46,13 @@ export function parseRichTextDoc(value: unknown): JSONContent {
   return { type: 'doc', content: [{ type: 'paragraph' }] };
 }
 
+/** Whether a stored rich-text value has no content (blank, or only empty paragraphs). */
+export function isRichTextEmpty(value: unknown): boolean {
+  const blocks = parseRichTextDoc(value).content;
+  if (!Array.isArray(blocks)) return true;
+  return blocks.every((block) => block.type === 'paragraph' && !block.content?.length);
+}
+
 /**
  * Serialize a doc the way the editor's `getJSON()` does (schema default attrs
  * filled in), so an unchanged stored value doesn't compare as an edit.

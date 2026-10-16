@@ -6,7 +6,7 @@ import { Layer, FieldVariable, CollectionVariable, CollectionItemWithValues, Col
 import { generateId } from '@/lib/utils';
 import { resolveInlineVariablesFromData } from '@/lib/inline-variables';
 import { DEFAULT_TEXT_STYLES } from '@/lib/text-format-utils';
-import { getCmsFieldBinding } from '@/lib/tiptap-utils';
+import { getCmsFieldBinding, isRichTextEmpty } from '@/lib/tiptap-utils';
 import { applyComponentOverrides } from '@/lib/resolve-components';
 import { getComponentVariantLayers } from '@/lib/component-variant-utils';
 import { resolveFieldFromSources } from '@/lib/cms-variables-utils';
@@ -1850,6 +1850,23 @@ function coerceSliderNavChildTag(tag: string, layer: Layer, parentName?: string)
   return tag;
 }
 
+/** Tags that can't take `dangerouslySetInnerHTML` (void) or manage their own children in React. */
+const NON_CONTAINER_TAGS = new Set([
+  'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta',
+  'source', 'track', 'wbr', 'textarea', 'select', 'option',
+]);
+
+/**
+ * Props for a childless layer so React skips hydrating its contents.
+ * Third-party scripts often mount widgets into an empty element by id before
+ * hydration; without this the extra nodes cause a hydration mismatch, which
+ * re-renders the whole document and wipes the widget.
+ */
+export function getEmptyLayerProps(htmlTag: string): { dangerouslySetInnerHTML?: { __html: string } } {
+  if (NON_CONTAINER_TAGS.has(htmlTag)) return {};
+  return { dangerouslySetInnerHTML: { __html: '' } };
+}
+
 /**
  * Apply limit and offset to collection items (after sorting)
  * @param items - Array of collection items
@@ -2237,8 +2254,10 @@ export function evaluateCondition(
       }
     }
 
-    // Check if value is present (non-empty)
-    const isPresent = rawValue !== undefined && rawValue !== null && rawValue !== '';
+    // Rich-text editors store a cleared field as an empty doc, not ''
+    const isPresent = fieldType === 'rich_text'
+      ? !isRichTextEmpty(rawValue)
+      : rawValue !== undefined && rawValue !== null && rawValue !== '';
 
     switch (effectiveOperator) {
       // Text operators

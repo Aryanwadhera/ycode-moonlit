@@ -16,7 +16,7 @@
 import React, { useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
 import dynamic from 'next/dynamic';
 import type { Layer, Locale, FormSettings, Component, DesignColorVariable, PasswordProtectionContext, DynamicTextVariable, DynamicRichTextVariable } from '@/types';
-import { getLayerHtmlTag, getClassesString, getText, resolveFieldValue, isTextContentLayer, getCollectionVariable, filterDisabledSliderLayers, applyCustomAttributes } from '@/lib/layer-utils';
+import { getLayerHtmlTag, getClassesString, getText, resolveFieldValue, isTextContentLayer, getCollectionVariable, filterDisabledSliderLayers, applyCustomAttributes, getEmptyLayerProps } from '@/lib/layer-utils';
 import { getMapIframeProps, DEFAULT_MAP_SETTINGS, resolveMarkerColor } from '@/lib/map-utils';
 import { HTML_TO_REACT_ATTRS } from '@/lib/parse-head-html';
 import { SWIPER_CLASS_MAP, SWIPER_DATA_ATTR_MAP, SLIDER_BUTTON_ARIA_LABELS, isSliderChromeButton } from '@/lib/slider-constants';
@@ -1840,6 +1840,11 @@ const LayerItem: React.FC<{
           />
         </Tag>
       );
+    }
+
+    const hasChildren = !!effectiveChildren && effectiveChildren.length > 0;
+    if (!textContent && !hasChildren && htmlTag !== 'form') {
+      return <Tag {...elementProps} {...getEmptyLayerProps(htmlTag)} />;
     }
 
     // Regular elements with text and/or children

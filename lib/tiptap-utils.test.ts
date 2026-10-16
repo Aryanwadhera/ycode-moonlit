@@ -6,7 +6,7 @@ import Paragraph from '@tiptap/extension-paragraph';
 import Text from '@tiptap/extension-text';
 import OrderedList from '@tiptap/extension-ordered-list';
 import ListItem from '@tiptap/extension-list-item';
-import { parseRichTextDoc, toEditorJSON } from '@/lib/tiptap-utils';
+import { isRichTextEmpty, parseRichTextDoc, toEditorJSON } from '@/lib/tiptap-utils';
 
 const schema = getSchema([Document, Paragraph, Text, OrderedList, ListItem]);
 
@@ -66,4 +66,18 @@ test('returns an empty doc for empty values', () => {
   const empty = { type: 'doc', content: [{ type: 'paragraph' }] };
   assert.deepEqual(parseRichTextDoc(''), empty);
   assert.deepEqual(parseRichTextDoc(null), empty);
+});
+
+test('treats blank values and empty-paragraph docs as empty rich text', () => {
+  assert.equal(isRichTextEmpty(''), true);
+  assert.equal(isRichTextEmpty(null), true);
+  assert.equal(isRichTextEmpty('{"type":"doc","content":[{"type":"paragraph"}]}'), true);
+  assert.equal(isRichTextEmpty({ type: 'doc', content: [{ type: 'paragraph' }, { type: 'paragraph', content: [] }] }), true);
+  assert.equal(isRichTextEmpty({ type: 'doc' }), true);
+});
+
+test('treats docs with text or non-paragraph blocks as non-empty rich text', () => {
+  assert.equal(isRichTextEmpty(JSON.stringify({ type: 'doc', content: [paragraph('Hi')] })), false);
+  assert.equal(isRichTextEmpty({ type: 'doc', content: [{ type: 'richTextImage', attrs: { src: 'a.png' } }] }), false);
+  assert.equal(isRichTextEmpty('Legacy plain text'), false);
 });
