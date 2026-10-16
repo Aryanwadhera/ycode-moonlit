@@ -6,7 +6,11 @@ import { withToolAnnotations } from './tool-annotations';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 interface Registered {
-  config: { inputSchema: Record<string, unknown> };
+  config: {
+    title?: string;
+    inputSchema: Record<string, unknown>;
+    annotations?: Record<string, unknown>;
+  };
   handler: (args: Record<string, unknown>, extra: unknown) => unknown;
 }
 
@@ -35,6 +39,16 @@ test('shared params are advertised on every tool and stripped before the handler
 
   await tool.handler({ page_id: 'p1', site_id: 's1' }, {});
   assert.deepEqual(received, { page_id: 'p1' });
+});
+
+test('title is set both on the tool and in annotations', () => {
+  const { server, registered } = fakeServer();
+  withToolAnnotations(server).tool('delete_page', 'Delete a page', {}, async () => ({ content: [] }));
+
+  const { config } = registered.get('delete_page')!;
+  assert.equal(config.title, 'Delete page');
+  assert.equal(config.annotations?.title, 'Delete page');
+  assert.equal(config.annotations?.destructiveHint, true);
 });
 
 test('without shared params the schema and handler pass through untouched', () => {

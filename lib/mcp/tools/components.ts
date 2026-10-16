@@ -53,12 +53,19 @@ import { designSchema, richTextBlockSchema, templateEnum, updateLinkOp, updateSe
 const variableTypeEnum = z.enum(['text', 'rich_text', 'image', 'link', 'audio', 'video', 'icon', 'variant', 'visibility', 'id'])
   .describe('Variable type. "variant" lets instances pick which variant of a nested component is rendered. "visibility" is a boolean ({ visible: true|false }) that shows/hides the linked layer per instance. "id" is a string ({ id: "my-element" }) that sets the linked layer\'s HTML id attribute per instance (e.g. per-page tracking ids).');
 
+const variableDefaultValueSchema = z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.record(z.string(), z.unknown()),
+]);
+
 const variableSchema = z.object({
   name: z.string().describe('Display name (e.g. "Button label", "Hero image")'),
   type: variableTypeEnum.default('text'),
   placeholder: z.string().optional()
     .describe('Placeholder text shown in the override input on each instance.'),
-  default_value: z.unknown().optional()
+  default_value: variableDefaultValueSchema.optional()
     .describe('Default value applied when an instance does not override the variable. Shape matches the variable type (e.g. { type: "dynamic_text", data: { content: "Click me" } } for text).'),
 });
 
@@ -67,7 +74,7 @@ const variableUpdateSchema = z.object({
   name: z.string().describe('Variable display name'),
   type: variableTypeEnum.default('text'),
   placeholder: z.string().optional(),
-  default_value: z.unknown().optional(),
+  default_value: variableDefaultValueSchema.optional(),
 });
 
 /**
