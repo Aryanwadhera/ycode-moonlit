@@ -6,7 +6,7 @@ import { Layer, FieldVariable, CollectionVariable, CollectionItemWithValues, Col
 import { generateId } from '@/lib/utils';
 import { resolveInlineVariablesFromData } from '@/lib/inline-variables';
 import { DEFAULT_TEXT_STYLES } from '@/lib/text-format-utils';
-import { getCmsFieldBinding } from '@/lib/tiptap-utils';
+import { getCmsFieldBinding, isRichTextEmpty } from '@/lib/tiptap-utils';
 import { applyComponentOverrides } from '@/lib/resolve-components';
 import { getComponentVariantLayers } from '@/lib/component-variant-utils';
 import { resolveFieldFromSources } from '@/lib/cms-variables-utils';
@@ -2237,8 +2237,10 @@ export function evaluateCondition(
       }
     }
 
-    // Check if value is present (non-empty)
-    const isPresent = rawValue !== undefined && rawValue !== null && rawValue !== '';
+    // Rich-text editors store a cleared field as an empty doc, not ''
+    const isPresent = fieldType === 'rich_text'
+      ? !isRichTextEmpty(rawValue)
+      : rawValue !== undefined && rawValue !== null && rawValue !== '';
 
     switch (effectiveOperator) {
       // Text operators
