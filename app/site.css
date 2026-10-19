@@ -17,6 +17,7 @@
 
 @import "tailwindcss" source(none);
 
+@source "../app/(site)/ycode/preview";
 @source "../components/*.tsx";
 @source "../components/layers";
 @source "../components/ui/shimmer-skeleton.tsx";
