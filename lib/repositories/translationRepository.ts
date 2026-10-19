@@ -50,6 +50,9 @@ export async function getAllTranslationRows<T = Translation>(
  * Get all translations for a locale (draft by default). Pages through the
  * 1000-row PostgREST default so projects with large catalogues don't get
  * silently truncated.
+ *
+ * Paged loaders here tie-break on `id`: rows published in one batch share a
+ * `created_at`, and offset paging over ties silently skips/duplicates rows.
  */
 export async function getTranslationsByLocale(
   localeId: string,
@@ -73,6 +76,7 @@ export async function getTranslationsByLocale(
       .eq('is_published', isPublished)
       .is('deleted_at', null)
       .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
       .range(from, from + PAGE_SIZE - 1);
 
     if (error) {
@@ -151,6 +155,7 @@ export async function getLocaleScaffoldTranslations(
       .is('deleted_at', null)
       .in('source_type', NON_CMS_SOURCE_TYPES)
       .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
       .range(from, to) as unknown as PromiseLike<{ data: Translation[] | null; error: { message: string } | null }>,
   );
 
@@ -165,6 +170,7 @@ export async function getLocaleScaffoldTranslations(
       .eq('source_type', 'cms')
       .in('content_key', SLUG_CONTENT_KEYS)
       .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
       .range(from, to) as unknown as PromiseLike<{ data: Translation[] | null; error: { message: string } | null }>,
   );
 
@@ -238,6 +244,7 @@ export async function getSlugTranslationsByLocale(
       .is('deleted_at', null)
       .in('content_key', SLUG_CONTENT_KEYS)
       .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
       .range(from, from + PAGE_SIZE - 1);
 
     if (error) {
