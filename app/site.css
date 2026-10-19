@@ -6,25 +6,26 @@
  * Public pages never reference any of it; per-page utilities used by user
  * layers are inlined as `<style id="ycode-styles">` by `PageRenderer.tsx`.
  *
- * To keep this bundle small we let Tailwind scan the project as usual but
- * exclude the heavy builder UI route group. Files like `lib/templates/**`,
- * `lib/page-utils.ts`, `lib/text-format-utils.ts` and the public renderer
- * components stay in scope so all the arbitrary-value classes they carry
- * (gap-[20px], leading-[1.5], etc.) end up in the bundle.
+ * This stylesheet is render-blocking on every published page, so automatic
+ * source detection is disabled: Tailwind only scans the files below, which
+ * hardcode classes into public markup or toggle them at runtime. Classes that
+ * come from layer data (templates, imports, user edits) are already compiled
+ * into each page's inline CSS and don't belong here. A component that renders
+ * on published pages with hardcoded classes must live in `components/` (top
+ * level) or be added to this list.
  */
 
-@import "tailwindcss";
+@import "tailwindcss" source(none);
 
-/* Builder UI is not rendered on published pages — drop ~150 KiB of
-   sidebar/modal/dropdown utilities by excluding the route group. */
-@source not "../app/(builder)";
-
-/* AI tool descriptions document color-variable class syntax using angle-bracket
-   id placeholders, which compile to invalid CSS and fail the build. They style
-   nothing: generated sites are compiled server-side and the canvas uses the
-   Tailwind browser build. */
-@source not "../lib/mcp";
-@source not "../lib/agent";
+@source "../components/*.tsx";
+@source "../components/layers";
+@source "../components/ui/shimmer-skeleton.tsx";
+@source "../lib/animation-display.ts";
+@source "../lib/body-classes.ts";
+@source "../lib/dynamic-variable-view.tsx";
+@source "../lib/password-form-template.ts";
+@source "../lib/slider-utils.ts";
+@source "../lib/text-format-utils.ts";
 
 @custom-variant dark (&:is(.dark *));
 
