@@ -662,8 +662,6 @@ const CenterCanvas = React.memo(function CenterCanvas({
   const isPreviewMode = useEditorStore((state) => state.isPreviewMode);
   const aiBuildingPageId = useEditorStore((state) => state.aiBuildingPageId);
   const activeSidebarTab = useEditorStore((state) => state.activeSidebarTab);
-  const activeInteractionTriggerLayerId = useEditorStore((state) => state.activeInteractionTriggerLayerId);
-  const activeInteractionTargetLayerIds = useEditorStore((state) => state.activeInteractionTargetLayerIds);
   const richTextSheetLayerId = useEditorStore((state) => state.richTextSheetLayerId);
   const closeRichTextSheet = useEditorStore((state) => state.closeRichTextSheet);
   const activeSublayerIndex = useEditorStore((state) => state.activeSublayerIndex);
@@ -2753,7 +2751,6 @@ const CenterCanvas = React.memo(function CenterCanvas({
                         onCanvasClick={handleCanvasClick}
                         onComponentEdit={canEditStructure ? handleCanvasComponentEdit : undefined}
                         editingComponentVariables={editingComponentVariables}
-                        forceVisibleLayerIds={activeInteractionTriggerLayerId ? activeInteractionTargetLayerIds : undefined}
                         zoom={zoom}
                         referenceViewportHeight={defaultCanvasHeight}
                       />

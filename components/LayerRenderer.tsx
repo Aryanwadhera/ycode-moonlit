@@ -51,6 +51,7 @@ import LocaleSelector from '@/components/layers/LocaleSelector';
 import { usePagesStore } from '@/stores/usePagesStore';
 import { useSettingsStore } from '@/stores/useSettingsStore';
 import { generateLinkHref, resolveLinkAttrs, isLinkAtCollectionBoundary, isLinkToCurrentPage, type LinkResolutionContext, type ResolvedAsset } from '@/lib/link-utils';
+import { stripDisplayNoneClasses } from '@/lib/animation-display';
 import { collectEditorHiddenLayerIds, collectKeptHiddenLayerIds, type HiddenLayerInfo } from '@/lib/animation-utils';
 import AnimationInitializer from '@/components/AnimationInitializer';
 import { transformLayerIdsForInstance, resolveVariableLinks } from '@/lib/resolve-components';
@@ -491,15 +492,20 @@ const LayerItemImpl: React.FC<{
   const isDragging = activeLayerId === layer.id;
   const textEditable = isTextEditable(layer);
 
-  // Reveal an editor-hidden layer (e.g. an animated dropdown) when it OR a
-  // descendant is selected. Subscribed reactively so a hidden ancestor updates
-  // when a descendant is selected — its own `isSelected` wouldn't change then.
+  // Reveal an editor-hidden layer (e.g. an animated dropdown) while its
+  // interaction is open in the Interactions panel, or when it OR a descendant
+  // is selected. Subscribed reactively so a hidden ancestor updates when a
+  // descendant is selected — its own `isSelected` wouldn't change then.
   // Returns a stable `false` for non-hidden layers, so it never re-renders them.
-  // Layers hidden explicitly via Visibility (`settings.hidden`) are exempt:
-  // the user asked for them to be hidden, so toggling visibility must take
-  // effect at once even while the layer is selected. They still show while
-  // their interaction is open (force-visible removes them from the map).
+  // Layers hidden explicitly via Visibility (`settings.hidden`) only reveal
+  // while their interaction is open: the user asked for them to be hidden, so
+  // toggling visibility must take effect at once even while selected.
   const isEditorHidden = isEditMode && !!editorHiddenLayerIds?.has(layer.id);
+  const editorHiddenBreakpoints = editorHiddenLayerIds?.get(layer.id);
+  const isEditorHiddenOnBreakpoint = isEditorHidden && (
+    !editorHiddenBreakpoints?.length ||
+    (!!editorBreakpoint && editorHiddenBreakpoints.includes(editorBreakpoint))
+  );
   // Visibility may be driven by a component variable (per-instance override or
   // the variable's default while editing the component); SSR bakes this into
   // `settings.hidden`, the canvas resolves it live here.
@@ -515,12 +521,16 @@ const LayerItemImpl: React.FC<{
     parentComponentVariables || editingComponentVariables,
     parentComponentOverrides,
   );
-  const canRevealFromSelection = isEditorHidden && !isHidden;
-  const revealFromSelection = useEditorStore((state) => {
-    if (!canRevealFromSelection) return false;
+  const isEditorRevealed = useEditorStore((state) => {
+    if (!isEditorHidden) return false;
+    if (state.activeInteractionTriggerLayerId && state.activeInteractionTargetLayerIds.includes(layer.id)) return true;
+    if (isHidden) return false;
     const sel = state.selectedLayerId;
     return sel ? containsLayerId(layer, sel) : false;
   });
+  // Inside component instances internal layers can't be individually selected,
+  // so they stay hidden.
+  const isRevealedOnCanvas = isEditorHiddenOnBreakpoint && isEditorRevealed && !parentComponentLayerId;
 
   const isEditor = useAuthStore((state) => state.role === 'editor');
 
@@ -1991,8 +2001,10 @@ const LayerItemImpl: React.FC<{
   const buttonNeedsTextCenter = isButtonWithLink
     && !layerClassList.some((c: string) => TEXT_ALIGN_CLASSES.has(c.split(':').pop() || ''));
 
+  // A static `hidden` class (Display: hidden in the design) would keep a revealed
+  // layer collapsed; the published runtime strips it when the interaction shows it.
   const fullClassName = isEditMode ? clsx(
-    classesString,
+    isRevealedOnCanvas ? stripDisplayNoneClasses(classesString) : classesString,
     paragraphClasses,
     SWIPER_CLASS_MAP[layer.name],
     isSlideChild && 'swiper-slide',
@@ -2353,26 +2365,11 @@ const LayerItemImpl: React.FC<{
       elementProps.style = { ...existingStyle, visibility: 'hidden' as const };
     }
 
-    // Hide elements that have display: hidden animation with on-load apply style (edit mode only)
-    // Show them when selected or when a child is selected
-    // Only hide on the breakpoints the animation applies to
-    // Inside component instances, always hide (internal layers can't be individually selected)
-    if (isEditMode && editorHiddenLayerIds?.has(layer.id)) {
-      const hiddenBreakpoints = editorHiddenLayerIds.get(layer.id) || [];
-      const shouldHideOnBreakpoint = hiddenBreakpoints.length === 0 ||
-        (editorBreakpoint && hiddenBreakpoints.includes(editorBreakpoint));
-
-      if (shouldHideOnBreakpoint) {
-        // Inside component instances internal layers can't be individually
-        // selected, so always hide. Otherwise reveal when this layer or a
-        // descendant is selected (subscribed reactively above).
-        const shouldHide = parentComponentLayerId ? true : !revealFromSelection;
-
-        if (shouldHide) {
-          const existingStyle = typeof elementProps.style === 'object' ? elementProps.style : {};
-          elementProps.style = { ...existingStyle, display: 'none' };
-        }
-      }
+    // Hide elements that have display: hidden animation with on-load apply style (edit mode only),
+    // on the breakpoints the animation applies to, unless revealed (see isRevealedOnCanvas)
+    if (isEditorHiddenOnBreakpoint && !isRevealedOnCanvas) {
+      const existingStyle = typeof elementProps.style === 'object' ? elementProps.style : {};
+      elementProps.style = { ...existingStyle, display: 'none' };
     }
 
     // Apply custom ID from settings (or a linked component variable) or attributes
