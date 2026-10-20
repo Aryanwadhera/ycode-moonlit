@@ -106,8 +106,6 @@ interface CanvasProps {
   onComponentEdit?: (componentId: string, instanceLayerId: string) => void;
   /** Component variables when editing a component (for default value display) */
   editingComponentVariables?: ComponentVariable[];
-  /** Layer IDs to force-show even if they have display:hidden apply_styles */
-  forceVisibleLayerIds?: string[];
   /** Current canvas zoom percentage (100 = 100%) */
   zoom?: number;
   /** Fixed viewport height for stable measurement of content using vh/svh/dvh units */
@@ -319,7 +317,6 @@ const Canvas = React.memo(function Canvas({
   onCanvasClick,
   onComponentEdit,
   editingComponentVariables,
-  forceVisibleLayerIds,
   zoom = 100,
   referenceViewportHeight,
   currentLocale,
@@ -424,18 +421,14 @@ const Canvas = React.memo(function Canvas({
   }, [enrichedPageCollectionItemDataRaw]);
 
   // Collect layer IDs that should be hidden on canvas (display: hidden with on-load)
-  // Exclude layers that are force-visible (targets of the active interaction).
-  // NOTE: this must NOT depend on selectedLayerId — it's a dependency of the
-  // iframe root.render() effect, so adding selection here forces a full (slow)
-  // iframe re-render on every click. Reveal-on-select is handled reactively
-  // inside LayerRenderer instead.
-  const editorHiddenLayerIds = useMemo(() => {
-    const hiddenMap = collectEditorHiddenLayerIds(resolvedLayers);
-    if (forceVisibleLayerIds && forceVisibleLayerIds.length > 0) {
-      forceVisibleLayerIds.forEach(id => hiddenMap.delete(id));
-    }
-    return hiddenMap;
-  }, [resolvedLayers, forceVisibleLayerIds]);
+  // NOTE: this must NOT depend on selection or the active interaction — it's a
+  // dependency of the iframe root.render() effect, so either would force a full
+  // (slow) iframe re-render. Reveal-on-select and reveal-while-the-interaction-
+  // is-open are handled reactively inside LayerRenderer instead.
+  const editorHiddenLayerIds = useMemo(
+    () => collectEditorHiddenLayerIds(resolvedLayers),
+    [resolvedLayers],
+  );
 
   // `settings.hidden` layers kept in HTML (reveal targets, keepInHtml) must exist
   // on canvas (collapsed via editorHiddenLayerIds above) so they can be selected
