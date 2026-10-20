@@ -26,6 +26,11 @@ export function isDisplayNoneClass(className: string): boolean {
   return BREAKPOINT_PREFIXES.some((prefix) => className === `${prefix}hidden`);
 }
 
+/** Remove static `hidden` classes from a class string (canvas equivalent of `showGsapElement`) */
+export function stripDisplayNoneClasses(classes: string): string {
+  return classes.split(' ').filter((cls) => cls && !isDisplayNoneClass(cls)).join(' ');
+}
+
 /** Re-add any `hidden` classes removed by a previous reveal */
 export function restoreGsapDisplayClasses(element: Element): void {
   const stripped = element.getAttribute(GSAP_STRIPPED_ATTR);
