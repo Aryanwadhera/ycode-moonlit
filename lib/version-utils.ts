@@ -159,11 +159,21 @@ function createLayerArrayPatch(from: Layer[], to: Layer[], path: string): JsonPa
   const fromCommonOrder = from.filter(l => commonIds.includes(l.id)).map(l => l.id);
   const toCommonOrder = to.filter(l => commonIds.includes(l.id)).map(l => l.id);
   const orderChanged = !deepEqual(fromCommonOrder, toCommonOrder);
+  const hasModifications = commonIds.some(id => !deepEqual(fromById.get(id)!.item, toById.get(id)!.item));
+  const hasDuplicateIds = fromById.size !== from.length || toById.size !== to.length;
 
   // For complex structural changes, use replace for reliability:
   // - Order changed (reordering is hard to patch correctly)
   // - Both additions and removals (index calculations become unreliable)
-  if (orderChanged || (hasRemovals && hasAdditions)) {
+  // - Additions/removals alongside sibling modifications: nested paths use
+  //   indices that the structural ops shift, and applyPatch reorders ops by type
+  // - Duplicate IDs (ID-based diffing can't address every item)
+  if (
+    orderChanged ||
+    hasDuplicateIds ||
+    (hasRemovals && hasAdditions) ||
+    ((hasRemovals || hasAdditions) && hasModifications)
+  ) {
     patch.push({ op: 'replace', path: path, value: to });
     return patch;
   }
