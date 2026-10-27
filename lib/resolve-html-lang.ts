@@ -1,5 +1,5 @@
 /**
- * Server-only lookup of `<html lang>` from published/draft locales.
+ * Server-only lookup of `<html lang>` and the URL locale from published/draft locales.
  * Kept off the pure helper so unit tests don't load Next.js cache APIs.
  */
 
@@ -7,7 +7,7 @@ import 'server-only';
 
 import { unstable_cache } from 'next/cache';
 import { buildAllPagesTag, buildGlobalSettingsTag } from '@/lib/cache-tags';
-import { htmlLangFromLocales } from '@/lib/html-lang';
+import { htmlLangFromLocales, prefixedLocaleCodeFromLocales } from '@/lib/html-lang';
 import { getAllLocales } from '@/lib/repositories/localeRepository';
 
 const FALLBACK_LANG = 'en';
@@ -26,6 +26,12 @@ function getCachedPublishedLocales(tenantId?: string) {
   )();
 }
 
+function getLocales(isPublished: boolean, tenantId?: string) {
+  return isPublished
+    ? getCachedPublishedLocales(tenantId)
+    : getAllLocales(false, tenantId);
+}
+
 /**
  * Resolve `<html lang>` for a public pathname (no leading slash).
  * Falls back to `en` when locales cannot be loaded.
@@ -36,12 +42,24 @@ export async function resolveHtmlLang(
   tenantId?: string,
 ): Promise<string> {
   try {
-    const locales = isPublished
-      ? await getCachedPublishedLocales(tenantId)
-      : await getAllLocales(false, tenantId);
-
-    return htmlLangFromLocales(slugPath, locales);
+    return htmlLangFromLocales(slugPath, await getLocales(isPublished, tenantId));
   } catch {
     return FALLBACK_LANG;
+  }
+}
+
+/**
+ * Resolve the non-default locale code a public pathname (no leading slash) is
+ * prefixed with. Null for default-locale paths or when locales cannot be loaded.
+ */
+export async function resolvePathLocaleCode(
+  slugPath: string,
+  isPublished = true,
+  tenantId?: string,
+): Promise<string | null> {
+  try {
+    return prefixedLocaleCodeFromLocales(slugPath, await getLocales(isPublished, tenantId));
+  } catch {
+    return null;
   }
 }

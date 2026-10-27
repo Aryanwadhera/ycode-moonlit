@@ -44,24 +44,37 @@ export function htmlLangFromLocales(
     || locales[0]?.code
     || FALLBACK_LANG;
 
-  if (!slugPath) {
-    return defaultCode;
-  }
+  return findPathLocale(slugPath, locales)?.code || defaultCode;
+}
 
+/**
+ * Code of the non-default locale a slug path is prefixed with, in the locale
+ * record's casing. Null for default-locale (unprefixed) paths.
+ */
+export function prefixedLocaleCodeFromLocales(
+  slugPath: string,
+  locales: HtmlLangLocale[],
+): string | null {
+  const matched = findPathLocale(slugPath, locales);
+  return matched && !matched.is_default ? matched.code : null;
+}
+
+function findPathLocale(
+  slugPath: string,
+  locales: HtmlLangLocale[],
+): HtmlLangLocale | undefined {
   const detected = detectLocaleFromPath(
     slugPath,
     locales.map((locale) => locale.code),
   );
 
   if (!detected) {
-    return defaultCode;
+    return undefined;
   }
 
-  const matched = locales.find(
+  return locales.find(
     (locale) => locale.code.toLowerCase() === detected.localeCode.toLowerCase(),
   );
-
-  return matched?.code || defaultCode;
 }
 
 /**

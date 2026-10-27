@@ -2,11 +2,11 @@ import { notFound, redirect, permanentRedirect } from 'next/navigation';
 import { unstable_noStore } from 'next/cache';
 import type { Metadata } from 'next';
 import { fetchPageByPath, fetchErrorPage } from '@/lib/page-fetcher';
-import { fetchCachedErrorPage } from '@/lib/published-page-cache';
+import { generateCachedErrorPageMetadata } from '@/lib/not-found-metadata';
 import PageRenderer from '@/components/PageRenderer';
 import PaginationSeoLinks from '@/components/PaginationSeoLinks';
 import PasswordForm from '@/components/PasswordForm';
-import { fetchGlobalPageSettings, generateErrorPageMetadata, generatePageMetadata } from '@/lib/generate-page-metadata';
+import { fetchGlobalPageSettings, generatePageMetadata } from '@/lib/generate-page-metadata';
 import { getSettingByKey } from '@/lib/repositories/settingsRepository';
 import { parseAuthCookie, getPasswordProtection, fetchFoldersForAuth } from '@/lib/page-auth';
 import { getPaginationContext, toQueryString } from '@/lib/pagination-context';
@@ -71,7 +71,7 @@ export default async function DynamicSlugPage({ params, searchParams }: DynamicS
     const protection = getPasswordProtection(page, folders, authCookie);
 
     if (!protection.isUnlocked) {
-      const errorPageData = await fetchErrorPage(401, true);
+      const errorPageData = await fetchErrorPage(401, true, undefined, locale?.code);
 
       if (errorPageData) {
         const { page: errorPage, pageLayers: errorPageLayers, components: errorComponents } = errorPageData;
@@ -83,6 +83,9 @@ export default async function DynamicSlugPage({ params, searchParams }: DynamicS
             components={errorComponents}
             generatedCss={globalSettings.publishedCss || undefined}
             colorVariablesCss={globalSettings.colorVariablesCss || undefined}
+            locale={errorPageData.locale}
+            availableLocales={errorPageData.availableLocales}
+            translations={errorPageData.translations}
             ycodeBadge={globalSettings.ycodeBadge}
             passwordProtection={{
               pageId: protection.protectedBy === 'page' ? protection.protectedById : undefined,
@@ -164,21 +167,13 @@ export async function generateMetadata({ params, searchParams }: DynamicSlugPage
   const tenantId = resolvedTenantId ?? undefined;
 
   if (!data) {
-    const errorPageData = await fetchCachedErrorPage(404, tenantId);
-    return generateErrorPageMetadata(404, errorPageData?.page ?? null, {
-      globalSeoSettings: globalSettings,
-      tenantId,
-    });
+    return generateCachedErrorPageMetadata(404, slugPath, { globalSeoSettings: globalSettings, tenantId });
   }
 
   // Don't leak metadata for protected pages — the page component gates access.
   const folders = await fetchFoldersForAuth(true);
   if (getPasswordProtection(data.page, folders, null).isProtected) {
-    const errorPageData = await fetchCachedErrorPage(401, tenantId);
-    return generateErrorPageMetadata(401, errorPageData?.page ?? null, {
-      globalSeoSettings: globalSettings,
-      tenantId,
-    });
+    return generateCachedErrorPageMetadata(401, slugPath, { globalSeoSettings: globalSettings, tenantId });
   }
 
   const metadata = await generatePageMetadata(data.page, {
