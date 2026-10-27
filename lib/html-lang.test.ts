@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { htmlDirFromLang, htmlLangFromLocales } from '@/lib/html-lang';
+import { htmlDirFromLang, htmlLangFromLocales, prefixedLocaleCodeFromLocales } from '@/lib/html-lang';
 
 const locales = [
   { code: 'en', is_default: true },
@@ -46,4 +46,15 @@ test('ltr languages and unknown codes set dir to ltr', () => {
   assert.equal(htmlDirFromLang('fr'), 'ltr');
   assert.equal(htmlDirFromLang('pt-BR'), 'ltr');
   assert.equal(htmlDirFromLang('xyz'), 'ltr');
+});
+
+test('prefixed locale code matches non-default locale prefixes', () => {
+  assert.equal(prefixedLocaleCodeFromLocales('fr/does-not-exist', locales), 'fr');
+  assert.equal(prefixedLocaleCodeFromLocales('pt-br/contato', locales), 'pt-BR');
+});
+
+test('prefixed locale code is null for default-locale paths', () => {
+  assert.equal(prefixedLocaleCodeFromLocales('', locales), null);
+  assert.equal(prefixedLocaleCodeFromLocales('does-not-exist', locales), null);
+  assert.equal(prefixedLocaleCodeFromLocales('en/about', locales), null);
 });

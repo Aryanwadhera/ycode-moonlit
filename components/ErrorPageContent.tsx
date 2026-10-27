@@ -29,7 +29,12 @@ export default function ErrorPageContent({ published, reset }: ErrorPageContentP
   useEffect(() => {
     async function fetchErrorPage() {
       try {
-        const response = await fetch(`/ycode/api/error-page?code=500&published=${published}`);
+        const params = new URLSearchParams({
+          code: '500',
+          published: String(published),
+          path: window.location.pathname,
+        });
+        const response = await fetch(`/ycode/api/error-page?${params}`);
         if (response.ok) {
           const data = await response.json();
           setErrorPageData(data.pageData);
@@ -78,6 +83,9 @@ export default function ErrorPageContent({ published, reset }: ErrorPageContentP
             isPublished={published}
             pageCollectionItemId={errorPageData.collectionItem?.id}
             pageCollectionItemData={errorPageData.collectionItem?.values || undefined}
+            currentLocale={errorPageData.locale}
+            availableLocales={errorPageData.availableLocales}
+            translations={errorPageData.translations}
           />
         </div>
         {customCodeBody && (

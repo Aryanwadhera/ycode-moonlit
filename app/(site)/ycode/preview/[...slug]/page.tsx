@@ -8,6 +8,7 @@ import { generateColorVariablesCss } from '@/lib/repositories/colorVariableRepos
 
 import { generatePageMetadata } from '@/lib/generate-page-metadata';
 import { parseAuthCookie, getPasswordProtection, fetchFoldersForAuth } from '@/lib/page-auth';
+import { resolvePathLocaleCode } from '@/lib/resolve-html-lang';
 
 async function fetchPreviewDraftCss() {
   const settings = await getSettingsByKeys(['draft_css']);
@@ -36,10 +37,11 @@ export default async function Page({ params }: { params: Promise<{ slug: string 
 
   // If page not found, try to show custom 404 error page
   if (!data) {
-    const errorPageData = await fetchErrorPage(404, false);
+    const localeCode = await resolvePathLocaleCode(slugPath, false);
+    const errorPageData = await fetchErrorPage(404, false, undefined, localeCode ?? undefined);
 
     if (errorPageData) {
-      const { page, pageLayers, components } = errorPageData;
+      const { page, pageLayers, components, locale, availableLocales, translations } = errorPageData;
 
       return (
         <PageRenderer
@@ -48,6 +50,9 @@ export default async function Page({ params }: { params: Promise<{ slug: string 
           components={components}
           generatedCss={draftCSS}
           colorVariablesCss={colorVariablesCss || undefined}
+          locale={locale}
+          availableLocales={availableLocales}
+          translations={translations}
           isPreview={true}
         />
       );
@@ -66,7 +71,7 @@ export default async function Page({ params }: { params: Promise<{ slug: string 
 
   // If page is protected and not unlocked, show 401 error page
   if (protection.isProtected && !protection.isUnlocked) {
-    const errorPageData = await fetchErrorPage(401, false);
+    const errorPageData = await fetchErrorPage(401, false, undefined, locale?.code);
 
     if (errorPageData) {
       const { page: errorPage, pageLayers: errorPageLayers, components: errorComponents } = errorPageData;
@@ -78,6 +83,9 @@ export default async function Page({ params }: { params: Promise<{ slug: string 
           components={errorComponents}
           generatedCss={draftCSS}
           colorVariablesCss={colorVariablesCss || undefined}
+          locale={errorPageData.locale}
+          availableLocales={errorPageData.availableLocales}
+          translations={errorPageData.translations}
           isPreview={true}
           passwordProtection={{
             pageId: protection.protectedBy === 'page' ? protection.protectedById : undefined,

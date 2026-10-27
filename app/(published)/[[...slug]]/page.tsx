@@ -7,7 +7,8 @@ import type { Metadata } from 'next';
 import { getSupabaseAdmin } from '@/lib/supabase-server';
 import { GLOBAL_SETTINGS_TAG } from '@/lib/cache-tags';
 import { buildSlugPath } from '@/lib/page-utils';
-import { generatePageMetadata, generateErrorPageMetadata, fetchGlobalPageSettings } from '@/lib/generate-page-metadata';
+import { generatePageMetadata, fetchGlobalPageSettings } from '@/lib/generate-page-metadata';
+import { generateCachedErrorPageMetadata } from '@/lib/not-found-metadata';
 import { fetchCachedErrorPage, fetchCachedPageForMetadata } from '@/lib/published-page-cache';
 import { fetchHomepage, fetchPageByPath, splitPageData, reassemblePageData } from '@/lib/page-fetcher';
 import type { PageData, PaginationContext } from '@/lib/page-fetcher';
@@ -373,7 +374,7 @@ export default async function Page({ params }: PageProps) {
 
     // If page is protected and not unlocked, show 401 error page
     if (!protection.isUnlocked) {
-      const errorPageData = await fetchCachedErrorPage(401);
+      const errorPageData = await fetchCachedErrorPage(401, undefined, slugPath);
 
       if (errorPageData) {
         const { page: errorPage, pageLayers: errorPageLayers, components: errorComponents } = errorPageData;
@@ -385,6 +386,9 @@ export default async function Page({ params }: PageProps) {
             components={errorComponents}
             generatedCss={globalSettings.publishedCss || undefined}
             colorVariablesCss={globalSettings.colorVariablesCss || undefined}
+            locale={errorPageData.locale}
+            availableLocales={errorPageData.availableLocales}
+            translations={errorPageData.translations}
             globalCustomCodeHead={globalSettings.globalCustomCodeHead}
             globalCustomCodeBody={globalSettings.globalCustomCodeBody}
             ycodeBadge={globalSettings.ycodeBadge}
@@ -468,10 +472,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug?: st
     // The layout emits this same metadata into the flushed head (Next.js drops
     // a page's metadata once it calls notFound()); keeping it here too means
     // the streamed metadata the client applies doesn't contradict it.
-    const errorPageData = await fetchCachedErrorPage(404);
-    return generateErrorPageMetadata(404, errorPageData?.page ?? null, {
-      globalSeoSettings: globalSettings,
-    });
+    return generateCachedErrorPageMetadata(404, slugPath, { globalSeoSettings: globalSettings });
   }
 
   // Don't leak metadata for protected pages. Checking without cookies keeps
@@ -481,10 +482,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug?: st
   const protectionCheck = getPasswordProtection(data.page, folders, null);
 
   if (protectionCheck.isProtected) {
-    const errorPageData = await fetchCachedErrorPage(401);
-    return generateErrorPageMetadata(401, errorPageData?.page ?? null, {
-      globalSeoSettings: globalSettings,
-    });
+    return generateCachedErrorPageMetadata(401, slugPath, { globalSeoSettings: globalSettings });
   }
 
   const routeTag = isHomepage ? 'route-/' : `route-/${slugPath}`;

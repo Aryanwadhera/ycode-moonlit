@@ -18,7 +18,7 @@ export default async function NotFound() {
 
   if (errorPageData) {
     const globalSettings = await fetchGlobalPageSettings().catch(() => null);
-    const { page, pageLayers, components } = errorPageData;
+    const { page, pageLayers, components, locale, availableLocales, translations } = errorPageData;
 
     return (
       <PageRenderer
@@ -27,6 +27,9 @@ export default async function NotFound() {
         components={components}
         generatedCss={globalSettings?.publishedCss || undefined}
         colorVariablesCss={globalSettings?.colorVariablesCss || undefined}
+        locale={locale}
+        availableLocales={availableLocales}
+        translations={translations}
         globalCustomCodeHead={globalSettings?.globalCustomCodeHead}
         globalCustomCodeBody={globalSettings?.globalCustomCodeBody}
         ycodeBadge={globalSettings?.ycodeBadge ?? true}

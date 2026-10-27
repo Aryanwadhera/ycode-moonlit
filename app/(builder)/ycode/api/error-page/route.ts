@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchErrorPage } from '@/lib/page-fetcher';
+import { parsePathnameForPageHead } from '@/lib/page-head-path';
 import { getSettingsByKeys } from '@/lib/repositories/settingsRepository';
 import { generateColorVariablesCss } from '@/lib/repositories/colorVariableRepository';
+import { resolvePathLocaleCode } from '@/lib/resolve-html-lang';
+import { getTenantIdFromHeaders } from '@/lib/supabase-server';
 
 // Force dynamic rendering - no caching
 export const dynamic = 'force-dynamic';
@@ -11,7 +14,7 @@ export const revalidate = 0;
  * GET /ycode/api/error-page
  * 
  * Fetch error page data by error code
- * Query params: code (404, 401, 500), published (true/false)
+ * Query params: code (404, 401, 500), published (true/false), path (optional URL pathname for locale)
  */
 export async function GET(request: NextRequest) {
   try {
@@ -34,8 +37,14 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Fetch error page
-    const pageData = await fetchErrorPage(errorCode, published);
+    // Translate into the locale of the URL the error occurred on
+    const path = searchParams.get('path');
+    const tenantId = (await getTenantIdFromHeaders()) ?? undefined;
+    const localeCode = path
+      ? await resolvePathLocaleCode(parsePathnameForPageHead(path).slugPath, published, tenantId)
+      : null;
+
+    const pageData = await fetchErrorPage(errorCode, published, tenantId, localeCode ?? undefined);
 
     if (!pageData) {
       return NextResponse.json(
