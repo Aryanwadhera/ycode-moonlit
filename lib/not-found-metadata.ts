@@ -42,7 +42,7 @@ export async function withCustom404Metadata(
     return siteMetadata;
   }
 
-  const errorPageData = await fetchCachedErrorPage(404, tenantId).catch(() => null);
+  const errorPageData = await fetchCachedErrorPage(404, tenantId, slugPath).catch(() => null);
   const errorMetadata = await generateErrorPageMetadata(404, errorPageData?.page ?? null, {
     globalSeoSettings,
     tenantId,

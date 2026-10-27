@@ -932,11 +932,13 @@ export async function fetchPageByPathForMetadata(
 /**
  * Fetch error page by error code (404, 401, 500)
  * Works for both draft and published pages
+ * @param localeCode - Non-default locale to translate the error page into
  */
 export async function fetchErrorPage(
   errorCode: number,
   isPublished: boolean,
-  tenantId?: string
+  tenantId?: string,
+  localeCode?: string
 ): Promise<PageData | null> {
   try {
     const supabase = await getSupabaseAdmin(tenantId);
@@ -984,8 +986,19 @@ export async function fetchErrorPage(
 
     const components = await fetchComponents(supabase, isPublished);
 
+    const { locale, translations } = localeCode
+      ? await loadTranslationsForLocale(localeCode, isPublished, tenantId)
+      : { locale: null, translations: {} as Record<string, Translation> };
+    const hasTranslations = !!locale && Object.keys(translations).length > 0;
+    const translationOptions = { includeIncomplete: !isPublished };
+
+    // Translate component-instance overrides before resolving components
+    const localizedLayers = hasTranslations
+      ? translateComponentOverrides(pageLayers?.layers || [], errorPage.id, translations, translationOptions)
+      : pageLayers?.layers || [];
+
     // First, resolve components so collection layers inside components are available
-    const layersWithComponents = resolveComponents(pageLayers?.layers || [], components);
+    const layersWithComponents = resolveComponents(localizedLayers, components);
 
     // Resolve collection layers server-side (for both draft and published)
     // The isPublished parameter controls which collection items to fetch
@@ -996,21 +1009,26 @@ export async function fetchErrorPage(
     // Resolve collections inside rich text embedded components
     resolvedLayers = await resolveRichTextCollections(resolvedLayers, components, isPublished);
 
+    // Apply translations (components already resolved above)
+    if (hasTranslations) {
+      resolvedLayers = injectTranslatedText(resolvedLayers, errorPage.id, translations, translationOptions);
+    }
+
     // Resolve all AssetVariables to URLs server-side (prevents client-side API calls)
     const resolved = await resolveAllAssets(resolvedLayers, isPublished, components);
     resolvedLayers = resolved.layers;
 
-    return {
+    return withSlimTranslations({
       page: errorPage,
       pageLayers: {
         ...pageLayers,
         layers: resolvedLayers,
       },
       components, // Layers are pre-resolved; components passed for rich-text embedded rendering
-      locale: null, // Error pages don't have locale context
+      locale,
       availableLocales: availableLocales as Locale[] || [],
-      translations: {}, // Error pages don't have translations
-    };
+      translations,
+    });
   } catch (error) {
     console.error('Failed to fetch error page:', error);
     return null;

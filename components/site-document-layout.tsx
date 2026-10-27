@@ -4,6 +4,7 @@ import type { Metadata } from 'next';
 import HreflangAlternateLinks from '@/components/HreflangAlternateLinks';
 import RootLayoutShell, { defaultMetadata } from '@/components/RootLayoutShell';
 import { composeDocumentBodyClassName } from '@/lib/body-classes';
+import { setDocumentPathname } from '@/lib/document-path';
 import { fetchGlobalPageSettings } from '@/lib/generate-page-metadata';
 import { renderRootLayoutHeadCode } from '@/lib/parse-head-html';
 import { resolvePageDocumentChrome } from '@/lib/resolve-page-head-code';
@@ -52,6 +53,8 @@ export default async function SiteDocumentLayout({
   publishedAt = null,
   globalCustomCodeHead = null,
 }: SiteDocumentLayoutProps) {
+  setDocumentPathname(pathname);
+
   const headElements: ReactNode[] = [];
   let bodyClasses = '';
 
