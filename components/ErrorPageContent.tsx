@@ -83,6 +83,9 @@ export default function ErrorPageContent({ published, reset }: ErrorPageContentP
             isPublished={published}
             pageCollectionItemId={errorPageData.collectionItem?.id}
             pageCollectionItemData={errorPageData.collectionItem?.values || undefined}
+            currentLocale={errorPageData.locale}
+            availableLocales={errorPageData.availableLocales}
+            translations={errorPageData.translations}
           />
         </div>
         {customCodeBody && (

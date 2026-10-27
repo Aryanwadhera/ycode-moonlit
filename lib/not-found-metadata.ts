@@ -4,6 +4,7 @@ import type { Metadata } from 'next';
 import { generateErrorPageMetadata } from '@/lib/generate-page-metadata';
 import type { GlobalPageSettings } from '@/lib/generate-page-metadata';
 import { fetchCachedErrorPage, fetchCachedPageForMetadata } from '@/lib/published-page-cache';
+import type { ErrorPageCode } from '@/lib/published-page-cache';
 
 export interface Custom404MetadataOptions {
   /** Pre-fetched global settings (avoids a duplicate lookup) */
@@ -42,11 +43,26 @@ export async function withCustom404Metadata(
     return siteMetadata;
   }
 
-  const errorPageData = await fetchCachedErrorPage(404, tenantId, slugPath).catch(() => null);
-  const errorMetadata = await generateErrorPageMetadata(404, errorPageData?.page ?? null, {
-    globalSeoSettings,
-    tenantId,
-  });
+  const errorMetadata = await generateCachedErrorPageMetadata(404, slugPath, { globalSeoSettings, tenantId });
 
   return { ...siteMetadata, ...errorMetadata };
+}
+
+/**
+ * Metadata for the custom error page, with its SEO translated into the locale
+ * of the requested path.
+ *
+ * @param slugPath - Requested path without the leading slash ('' for the homepage)
+ */
+export async function generateCachedErrorPageMetadata(
+  errorCode: ErrorPageCode,
+  slugPath: string,
+  options: Custom404MetadataOptions = {}
+): Promise<Metadata> {
+  const errorPageData = await fetchCachedErrorPage(errorCode, options.tenantId, slugPath).catch(() => null);
+
+  return generateErrorPageMetadata(errorCode, errorPageData?.page ?? null, {
+    ...options,
+    translations: errorPageData?.translations,
+  });
 }

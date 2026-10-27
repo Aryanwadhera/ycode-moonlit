@@ -441,7 +441,7 @@ const ERROR_PAGE_FALLBACKS: Record<number, { title: string; description?: string
 export async function generateErrorPageMetadata(
   errorCode: number,
   errorPage: Page | null,
-  options: Pick<GenerateMetadataOptions, 'globalSeoSettings' | 'tenantId'> = {}
+  options: Pick<GenerateMetadataOptions, 'globalSeoSettings' | 'tenantId' | 'translations'> = {}
 ): Promise<Metadata> {
   const fallback = ERROR_PAGE_FALLBACKS[errorCode] ?? { title: 'Error' };
 

@@ -71,7 +71,7 @@ export default async function Page({ params }: { params: Promise<{ slug: string 
 
   // If page is protected and not unlocked, show 401 error page
   if (protection.isProtected && !protection.isUnlocked) {
-    const errorPageData = await fetchErrorPage(401, false);
+    const errorPageData = await fetchErrorPage(401, false, undefined, locale?.code);
 
     if (errorPageData) {
       const { page: errorPage, pageLayers: errorPageLayers, components: errorComponents } = errorPageData;
@@ -83,6 +83,9 @@ export default async function Page({ params }: { params: Promise<{ slug: string 
           components={errorComponents}
           generatedCss={draftCSS}
           colorVariablesCss={colorVariablesCss || undefined}
+          locale={errorPageData.locale}
+          availableLocales={errorPageData.availableLocales}
+          translations={errorPageData.translations}
           isPreview={true}
           passwordProtection={{
             pageId: protection.protectedBy === 'page' ? protection.protectedById : undefined,

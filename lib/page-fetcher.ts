@@ -989,12 +989,12 @@ export async function fetchErrorPage(
     const { locale, translations } = localeCode
       ? await loadTranslationsForLocale(localeCode, isPublished, tenantId)
       : { locale: null, translations: {} as Record<string, Translation> };
-    const hasTranslations = !!locale && Object.keys(translations).length > 0;
+    const pageTranslations = locale && Object.keys(translations).length > 0 ? translations : undefined;
     const translationOptions = { includeIncomplete: !isPublished };
 
     // Translate component-instance overrides before resolving components
-    const localizedLayers = hasTranslations
-      ? translateComponentOverrides(pageLayers?.layers || [], errorPage.id, translations, translationOptions)
+    const localizedLayers = pageTranslations
+      ? translateComponentOverrides(pageLayers?.layers || [], errorPage.id, pageTranslations, translationOptions)
       : pageLayers?.layers || [];
 
     // First, resolve components so collection layers inside components are available
@@ -1003,15 +1003,15 @@ export async function fetchErrorPage(
     // Resolve collection layers server-side (for both draft and published)
     // The isPublished parameter controls which collection items to fetch
     let resolvedLayers = layersWithComponents.length > 0
-      ? await resolveCollectionLayers(layersWithComponents, isPublished, undefined, undefined, undefined)
+      ? await resolveCollectionLayers(layersWithComponents, isPublished, undefined, undefined, pageTranslations)
       : [];
 
     // Resolve collections inside rich text embedded components
-    resolvedLayers = await resolveRichTextCollections(resolvedLayers, components, isPublished);
+    resolvedLayers = await resolveRichTextCollections(resolvedLayers, components, isPublished, pageTranslations);
 
     // Apply translations (components already resolved above)
-    if (hasTranslations) {
-      resolvedLayers = injectTranslatedText(resolvedLayers, errorPage.id, translations, translationOptions);
+    if (pageTranslations) {
+      resolvedLayers = injectTranslatedText(resolvedLayers, errorPage.id, pageTranslations, translationOptions);
     }
 
     // Resolve all AssetVariables to URLs server-side (prevents client-side API calls)
