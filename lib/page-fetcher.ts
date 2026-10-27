@@ -933,19 +933,21 @@ export async function fetchPageByPathForMetadata(
  * Fetch error page by error code (404, 401, 500)
  * Works for both draft and published pages
  * @param localeCode - Non-default locale to translate the error page into
+ * @param options.throwOnError - Throw on lookup failures instead of returning
+ * null, so callers can tell them apart from a missing error page
  */
 export async function fetchErrorPage(
   errorCode: number,
   isPublished: boolean,
   tenantId?: string,
-  localeCode?: string
+  localeCode?: string,
+  options: { throwOnError?: boolean } = {}
 ): Promise<PageData | null> {
   try {
     const supabase = await getSupabaseAdmin(tenantId);
 
     if (!supabase) {
-      console.error('Supabase not configured');
-      return null;
+      throw new Error('Supabase not configured');
     }
 
     // Get all active locales from the database
@@ -956,13 +958,17 @@ export async function fetchErrorPage(
       .is('deleted_at', null);
 
     // Get the error page
-    const { data: errorPage } = await supabase
+    const { data: errorPage, error: errorPageError } = await supabase
       .from('pages')
       .select('*')
       .eq('error_page', errorCode)
       .eq('is_published', isPublished)
       .is('deleted_at', null)
-      .single();
+      .maybeSingle();
+
+    if (errorPageError) {
+      throw new Error(`Failed to fetch error page: ${errorPageError.message}`);
+    }
 
     if (!errorPage) {
       return null;
@@ -980,8 +986,7 @@ export async function fetchErrorPage(
       .single();
 
     if (layersError) {
-      console.error(`Failed to fetch ${isPublished ? 'published' : 'draft'} error page layers:`, layersError);
-      return null;
+      throw new Error(`Failed to fetch ${isPublished ? 'published' : 'draft'} error page layers: ${layersError.message}`);
     }
 
     const components = await fetchComponents(supabase, isPublished);
@@ -1030,6 +1035,7 @@ export async function fetchErrorPage(
       translations,
     });
   } catch (error) {
+    if (options.throwOnError) throw error;
     console.error('Failed to fetch error page:', error);
     return null;
   }
