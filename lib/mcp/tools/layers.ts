@@ -515,6 +515,7 @@ COMMON USES:
 - Change heading level: tag "h1", "h2", "h3", etc.
 - Set HTML embed code: html_embed_code "<script>..."
 - Add custom attributes: custom_attributes { "data-analytics": "hero" }
+- Set form field input / textarea / select attributes: custom_attributes { "placeholder": "Your email", "name": "email", "type": "email", "required": "true" }
 - Set custom HTML ID: html_id "my-section"
 - Hide a layer from the canvas: hidden true
 - Configure slider: slider { autoplay: true, delay: "5", loop: "loop", pagination: true }
@@ -530,7 +531,7 @@ COMMON USES:
       tag: z.string().optional().describe('HTML tag override: h1, h2, h3, h4, h5, h6, p, span, div, section, nav, footer, header, main, aside, article'),
       html_id: z.string().optional().describe('Custom HTML element ID (for anchor links, CSS targeting)'),
       html_embed_code: z.string().optional().describe('For htmlEmbed layers: the HTML/CSS/JS code to embed. Runs in a sandboxed iframe on the published site — it cannot overlay the page or access the parent DOM'),
-      custom_attributes: z.record(z.string(), z.string()).optional().describe('Custom HTML attributes as { name: value } pairs'),
+      custom_attributes: z.record(z.string(), z.string()).optional().describe('Custom HTML attributes as { name: value } pairs. On input / textarea / select, type, name, placeholder, value, required and autofocus set the field\'s own settings ("" clears, required/autofocus "false" turns off).'),
       custom_name: z.string().optional().describe('Display name for the layer in the builder'),
       hidden: z.boolean().optional().describe('Hide the layer everywhere (canvas and published site — not rendered). If an interaction targets it with display "visible", or keep_in_html is set, it is instead rendered collapsed so it can be revealed.'),
       keep_in_html: z.boolean().optional().describe('When hidden, keep the element in the HTML collapsed (display: none) instead of omitting it, so custom code can reveal it. Interaction reveal targets are kept automatically.'),

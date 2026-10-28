@@ -93,6 +93,7 @@ export default async function Page({ params }: { params: Promise<{ slug: string 
             redirectUrl: `/ycode/preview/${slugPath}`,
             isPublished: false,
           }}
+          localeSwitchTarget={{ page, collectionItem, collectionFields }}
         />
       );
     }

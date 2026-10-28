@@ -3,7 +3,8 @@
  * These are simplified versions focused on the MCP tool use case.
  */
 
-import type { Layer, DesignProperties, Breakpoint, UIState, CollectionFieldType, TranslationContentType, LinkSettings, Page } from '@/types';
+import type { Layer, DesignProperties, Breakpoint, UIState, CollectionField, TranslationContentType, LinkSettings, Page } from '@/types';
+import { resolveOptionValue } from '@/lib/collection-field-utils';
 import { generateId } from '@/lib/utils';
 import { findParentCollectionLayer } from '@/lib/layer-utils';
 import { COLLECTION_ITEM_KEYWORDS } from '@/lib/link-utils';
@@ -297,19 +298,22 @@ export function coerceRichTextValue(value: unknown): string | null {
 
 /**
  * Pre-process a collection item's `{ fieldId: value }` map so `rich_text`
- * fields are stored as valid Tiptap JSON. Non-rich-text fields pass through
- * untouched. Used by the create/update collection item tools before handing
- * values to setValuesByFieldName.
+ * fields are stored as valid Tiptap JSON and `option` fields store the option
+ * name (an option id is accepted too). Other fields pass through untouched.
+ * Used by the create/update collection item tools before handing values to
+ * setValuesByFieldName.
  */
 export function coerceCollectionItemValues(
   values: Record<string, unknown>,
-  fieldTypeById: Record<string, CollectionFieldType>,
+  fields: Pick<CollectionField, 'id' | 'type' | 'data'>[],
 ): Record<string, unknown> {
+  const fieldById = new Map(fields.map((f) => [f.id, f]));
   const result: Record<string, unknown> = {};
   for (const [fieldId, value] of Object.entries(values)) {
-    result[fieldId] = fieldTypeById[fieldId] === 'rich_text'
-      ? coerceRichTextValue(value)
-      : value;
+    const field = fieldById.get(fieldId);
+    if (field?.type === 'rich_text') result[fieldId] = coerceRichTextValue(value);
+    else if (field?.type === 'option') result[fieldId] = resolveOptionValue(field.data?.options, value);
+    else result[fieldId] = value;
   }
   return result;
 }
@@ -774,6 +778,50 @@ export interface LayerSettingsInput {
   html_embed_code?: string;
 }
 
+const FORM_FIELD_LAYERS = new Set(['input', 'textarea', 'select']);
+
+/** Field attributes the builder's field settings edit on `layer.attributes` (lowercased → stored key). */
+const FORM_FIELD_ATTRIBUTES: Record<string, string> = {
+  type: 'type',
+  name: 'name',
+  placeholder: 'placeholder',
+  value: 'value',
+  required: 'required',
+  autofocus: 'autoFocus',
+};
+const BOOLEAN_FIELD_ATTRIBUTES = new Set(['required', 'autoFocus']);
+
+/**
+ * Splits custom attributes on a form field into the field's own attributes
+ * (stored on `layer.attributes`, like the builder does) and the rest.
+ */
+function applyFieldAttributes(layer: Layer, customAttributes: Record<string, string>) {
+  const attributes: Record<string, unknown> = { ...layer.attributes };
+  const remaining: Record<string, string> = {};
+  const fieldKeys: string[] = [];
+  // The 401 page's password input must keep name/type for the verify endpoint.
+  const isLocked = layer.restrictions?.copy === false && layer.restrictions?.delete === false;
+
+  for (const [name, value] of Object.entries(customAttributes)) {
+    const key = FORM_FIELD_ATTRIBUTES[name.toLowerCase()];
+    if (!key) {
+      remaining[name] = value;
+      continue;
+    }
+    fieldKeys.push(name);
+    if (isLocked && (key === 'name' || key === 'type')) continue;
+    if (BOOLEAN_FIELD_ATTRIBUTES.has(key)) {
+      if (value === 'false') delete attributes[key];
+      else attributes[key] = true;
+    } else if (value === '') {
+      delete attributes[key];
+    } else {
+      attributes[key] = value;
+    }
+  }
+  return { attributes, remaining, fieldKeys };
+}
+
 /**
  * Apply the element-agnostic layer settings (tag, id, name, hidden, custom
  * attributes, embed code). Element-specific settings (slider, lightbox, map,
@@ -781,16 +829,32 @@ export interface LayerSettingsInput {
  */
 export function applyLayerSettings(layer: Layer, input: LayerSettingsInput): Layer {
   const settings = { ...layer.settings };
+  let attributes = layer.attributes;
   if (input.tag) settings.tag = input.tag;
   if (input.html_id) settings.id = input.html_id;
   if (input.hidden !== undefined) settings.hidden = input.hidden;
   if (input.keep_in_html !== undefined) settings.keepInHtml = input.keep_in_html;
-  if (input.custom_attributes) settings.customAttributes = { ...settings.customAttributes, ...input.custom_attributes };
+  if (input.custom_attributes) {
+    let customAttributes = input.custom_attributes;
+    if (FORM_FIELD_LAYERS.has(layer.name)) {
+      const split = applyFieldAttributes(layer, customAttributes);
+      attributes = split.attributes;
+      customAttributes = split.remaining;
+      // Drop stale copies so they don't override the field's own value.
+      const existing = Object.fromEntries(
+        Object.entries(settings.customAttributes || {}).filter(([name]) => !split.fieldKeys.some((k) => k.toLowerCase() === name.toLowerCase())),
+      );
+      settings.customAttributes = { ...existing, ...customAttributes };
+    } else {
+      settings.customAttributes = { ...settings.customAttributes, ...customAttributes };
+    }
+  }
   if (input.html_embed_code !== undefined) settings.htmlEmbed = { ...settings.htmlEmbed, code: input.html_embed_code };
 
   return {
     ...layer,
     settings,
+    ...(attributes !== layer.attributes ? { attributes } : {}),
     ...(input.custom_name ? { customName: input.custom_name } : {}),
   };
 }

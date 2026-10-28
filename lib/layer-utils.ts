@@ -3,6 +3,7 @@
  */
 
 import { Layer, FieldVariable, CollectionVariable, CollectionItemWithValues, CollectionField, Component, ComponentVariable, Breakpoint, LayerVariables, DesignColorVariable, BoundColorStop } from '@/types';
+import { escapeHtml } from '@/lib/escape-html';
 import { generateId } from '@/lib/utils';
 import { resolveInlineVariablesFromData } from '@/lib/inline-variables';
 import { DEFAULT_TEXT_STYLES } from '@/lib/text-format-utils';
@@ -58,6 +59,33 @@ export function applyCustomAttributes(
     }
     target[jsxName] = value;
   }
+}
+
+/**
+ * HTML-string counterpart of applyCustomAttributes: returns `attrs` with each
+ * custom attribute replacing a same-named one, plus a custom `style` parsed for
+ * merging into the inline styles. Names that would break the markup are skipped.
+ */
+export function applyCustomAttributesToHtml(
+  attrs: string[],
+  customAttributes: Record<string, string>,
+): { attrs: string[]; styles: Record<string, string> } {
+  let result = attrs;
+  let styles: Record<string, string> = {};
+  for (const [name, value] of Object.entries(customAttributes)) {
+    if (!/^[^\s"'<>/=]+$/.test(name)) continue;
+    const lower = name.toLowerCase();
+    if (lower === 'style') {
+      styles = { ...styles, ...parseStyleStringToObject(String(value)) };
+      continue;
+    }
+    result = result.filter((a) => {
+      const existing = a.toLowerCase();
+      return existing !== lower && !existing.startsWith(`${lower}=`);
+    });
+    result.push(`${name}="${escapeHtml(String(value))}"`);
+  }
+  return { attrs: result, styles };
 }
 
 // ─── Cached Layer Index ───

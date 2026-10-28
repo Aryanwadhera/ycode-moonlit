@@ -3,7 +3,9 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import type { CollectionFieldData, CollectionFieldType, CollectionSorting } from '@/types';
 import { getAllCollections, createCollection, updateCollection, deleteCollection } from '@/lib/repositories/collectionRepository';
+import { diffFieldOptions } from '@/lib/collection-field-utils';
 import {
+  getFieldById,
   getFieldsByCollectionId,
   createField,
   updateField,
@@ -16,7 +18,7 @@ import {
   updateItem,
   deleteItem,
 } from '@/lib/repositories/collectionItemRepository';
-import { setValuesByFieldName } from '@/lib/repositories/collectionItemValueRepository';
+import { clearValuesForField, renameValuesForField, setValuesByFieldName } from '@/lib/repositories/collectionItemValueRepository';
 import { coerceCollectionItemValues } from '@/lib/mcp/utils';
 
 const fieldTypeEnum = z.enum([
@@ -29,7 +31,7 @@ const fieldTypeEnum = z.enum([
 ]).describe('Field type (date = datetime, date_only = date without time)');
 
 const optionEntrySchema = z.object({
-  id: z.string().describe('Stable option ID (use the same ID when setting this option as a value on items)'),
+  id: z.string().describe('Stable option ID. Keep it unchanged when renaming an option so items using it follow the rename.'),
   name: z.string().describe('Display name shown to editors'),
 });
 
@@ -159,11 +161,11 @@ FIELD TYPES:
 
 Call list_collection_items first to get the collection's field IDs and types. The response includes the collection's field schema so you can fill in remaining fields. Value formats by field type:
 - rich_text: a markdown string (headings, lists, **bold**, *italic*, [links](url) are converted automatically) — or a pre-built Tiptap doc / RichTextBlock[] array. Do NOT send raw HTML or plain text expecting formatting.
-- option: the option ID. reference: the referenced item ID. multi_reference / multi-asset: a JSON array of IDs. boolean: true/false. date: ISO string.`,
+- option: the option name (the option ID is accepted and stored as its name). reference: the referenced item ID. multi_reference / multi-asset: a JSON array of IDs. boolean: true/false. date: ISO string.`,
     {
       collection_id: z.string().describe('The collection ID'),
       values: z.record(z.string(), z.unknown()).optional()
-        .describe('Field values as { fieldId: value } pairs. rich_text fields accept markdown (auto-converted to Tiptap). For "option" fields, value is the option ID. For multi-asset fields, value is a JSON array of asset IDs.'),
+        .describe('Field values as { fieldId: value } pairs. rich_text fields accept markdown (auto-converted to Tiptap). For "option" fields, value is the option name (or its ID). For multi-asset fields, value is a JSON array of asset IDs.'),
     },
     async ({ collection_id, values }) => {
       const fields = await getFieldsByCollectionId(collection_id);
@@ -174,7 +176,7 @@ Call list_collection_items first to get the collection's field IDs and types. Th
         for (const f of fields) {
           fieldType[f.id] = f.type;
         }
-        const coerced = coerceCollectionItemValues(values as Record<string, unknown>, fieldType);
+        const coerced = coerceCollectionItemValues(values as Record<string, unknown>, fields);
         await setValuesByFieldName(item.id, collection_id, coerced, fieldType);
       }
 
@@ -201,7 +203,7 @@ Values are { fieldId: value } pairs (call list_collection_items for field IDs/ty
     {
       collection_id: z.string().describe('The collection ID'),
       item_id: z.string().describe('The item ID to update'),
-      values: z.record(z.string(), z.unknown()).describe('Field values to update as { fieldId: value } pairs. rich_text fields accept markdown (auto-converted to Tiptap).'),
+      values: z.record(z.string(), z.unknown()).describe('Field values to update as { fieldId: value } pairs. rich_text fields accept markdown (auto-converted to Tiptap). For "option" fields, value is the option name (or its ID).'),
     },
     async ({ collection_id, item_id, values }) => {
       const fields = await getFieldsByCollectionId(collection_id);
@@ -209,7 +211,7 @@ Values are { fieldId: value } pairs (call list_collection_items for field IDs/ty
       for (const f of fields) {
         fieldType[f.id] = f.type;
       }
-      const coerced = coerceCollectionItemValues(values as Record<string, unknown>, fieldType);
+      const coerced = coerceCollectionItemValues(values as Record<string, unknown>, fields);
       await setValuesByFieldName(item_id, collection_id, coerced, fieldType);
       return { content: [{ type: 'text' as const, text: `Updated item ${item_id}` }] };
     },
@@ -284,11 +286,19 @@ Values are { fieldId: value } pairs (call list_collection_items for field IDs/ty
       data: fieldDataSchema.optional().describe('Replaces the entire field data object. Pass options[] to add/remove option values, data.multiple to toggle multi-asset, etc.'),
     },
     async ({ field_id, data, ...updates }) => {
+      const existing = data?.options ? await getFieldById(field_id) : null;
       const field = await updateField(field_id, {
         ...updates,
         type: updates.type as CollectionFieldType | undefined,
         data: buildFieldData(data),
       });
+      if (existing?.type === 'option' && data?.options) {
+        const { renames, removedNames } = diffFieldOptions(existing.data?.options, data.options);
+        await Promise.all([
+          ...renames.map(({ oldName, newName }) => renameValuesForField(field_id, oldName, newName)),
+          ...removedNames.map((name) => clearValuesForField(field_id, name)),
+        ]);
+      }
       return { content: [{ type: 'text' as const, text: JSON.stringify(field) }] };
     },
   );
