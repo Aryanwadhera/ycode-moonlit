@@ -50,7 +50,8 @@ Examples:
 - **Summary over detail**: reviewers read the diff — the PR describes intent
 - **Imperative mood** throughout: "Add", "Fix", "Remove", not past tense
 - **No filler**: avoid "various improvements", "some fixes" — be specific
-- **Link issues** when applicable: "Closes #123" in the summary
+- **Link issues** when applicable: "Closes #123" in the summary, one line per issue. GitHub only links and auto-closes issues (keywords or sidebar links) for PRs into the default branch (`main`); PRs target `develop`, so issues stay open until the release closes them
+- **Close linked issues at release**: after the release that ships the PR, close each linked issue with a comment linking the release and the PR in the PR's repository (`gh issue close <n> --comment "Fixed in [<version>](<release url>) via #<pr>."`)
 - **Keep it scannable**: bullets over paragraphs, short lines
 - **Test plan is mandatory**: always include at least one verification step
 - **No trailer parameters**: do not use `--trailer` flags in git commit commands
