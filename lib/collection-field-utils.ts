@@ -25,6 +25,41 @@ import { findAllParentCollectionLayers, getCollectionVariable } from '@/lib/laye
 // Field Types Configuration
 // =============================================================================
 
+type FieldOption = { id: string; name: string };
+
+/**
+ * Item values of option fields store the trimmed option name. Accepts an
+ * option id or name and returns the name; unknown values pass through.
+ */
+export function resolveOptionValue(options: FieldOption[] | undefined, value: unknown): unknown {
+  if (typeof value !== 'string' || !options?.length) return value;
+  if (options.some((o) => o.name.trim() === value)) return value;
+  const byId = options.find((o) => o.id === value);
+  return byId ? byId.name.trim() : value;
+}
+
+/**
+ * Compares option lists by stable id. Item values store the option name, so
+ * renamed options need their values rewritten and removed ones cleared.
+ */
+export function diffFieldOptions(
+  previous: FieldOption[] | undefined,
+  next: FieldOption[],
+): { renames: { oldName: string; newName: string }[]; removedNames: string[] } {
+  const previousOptions = previous ?? [];
+  const nextIds = new Set(next.map((o) => o.id));
+  const previousById = new Map(previousOptions.map((o) => [o.id, o.name]));
+
+  const renames: { oldName: string; newName: string }[] = [];
+  for (const option of next) {
+    const oldName = previousById.get(option.id);
+    const newName = (option.name ?? '').trim();
+    if (typeof oldName === 'string' && oldName !== newName) renames.push({ oldName, newName });
+  }
+  const removedNames = previousOptions.filter((o) => !nextIds.has(o.id)).map((o) => o.name);
+  return { renames, removedNames };
+}
+
 /** Check if a field type stores date/datetime values (date or date_only) */
 export function isDateFieldType(type: CollectionFieldType | string | null | undefined): boolean {
   return type === 'date' || type === 'date_only';

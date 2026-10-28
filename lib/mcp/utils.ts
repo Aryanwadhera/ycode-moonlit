@@ -3,7 +3,8 @@
  * These are simplified versions focused on the MCP tool use case.
  */
 
-import type { Layer, DesignProperties, Breakpoint, UIState, CollectionFieldType, TranslationContentType, LinkSettings, Page } from '@/types';
+import type { Layer, DesignProperties, Breakpoint, UIState, CollectionField, TranslationContentType, LinkSettings, Page } from '@/types';
+import { resolveOptionValue } from '@/lib/collection-field-utils';
 import { generateId } from '@/lib/utils';
 import { findParentCollectionLayer } from '@/lib/layer-utils';
 import { COLLECTION_ITEM_KEYWORDS } from '@/lib/link-utils';
@@ -297,19 +298,22 @@ export function coerceRichTextValue(value: unknown): string | null {
 
 /**
  * Pre-process a collection item's `{ fieldId: value }` map so `rich_text`
- * fields are stored as valid Tiptap JSON. Non-rich-text fields pass through
- * untouched. Used by the create/update collection item tools before handing
- * values to setValuesByFieldName.
+ * fields are stored as valid Tiptap JSON and `option` fields store the option
+ * name (an option id is accepted too). Other fields pass through untouched.
+ * Used by the create/update collection item tools before handing values to
+ * setValuesByFieldName.
  */
 export function coerceCollectionItemValues(
   values: Record<string, unknown>,
-  fieldTypeById: Record<string, CollectionFieldType>,
+  fields: Pick<CollectionField, 'id' | 'type' | 'data'>[],
 ): Record<string, unknown> {
+  const fieldById = new Map(fields.map((f) => [f.id, f]));
   const result: Record<string, unknown> = {};
   for (const [fieldId, value] of Object.entries(values)) {
-    result[fieldId] = fieldTypeById[fieldId] === 'rich_text'
-      ? coerceRichTextValue(value)
-      : value;
+    const field = fieldById.get(fieldId);
+    if (field?.type === 'rich_text') result[fieldId] = coerceRichTextValue(value);
+    else if (field?.type === 'option') result[fieldId] = resolveOptionValue(field.data?.options, value);
+    else result[fieldId] = value;
   }
   return result;
 }
