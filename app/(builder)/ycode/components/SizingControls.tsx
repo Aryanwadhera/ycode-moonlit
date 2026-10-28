@@ -23,13 +23,18 @@ import { useControlledInputs } from '@/hooks/use-controlled-input';
 import { useParentLayout } from '@/hooks/use-parent-layout';
 import { useEditorStore } from '@/stores/useEditorStore';
 import { extractMeasurementValue, formatMeasurementValue } from '@/lib/measurement-utils';
-import type { Layer } from '@/types';
+import type { Collection, CollectionField, Layer } from '@/types';
+import type { FieldGroup } from '@/lib/collection-field-utils';
 
 interface SizingControlsProps {
   layer: Layer | null;
   /** Needed to show the grid Span row, which only applies inside a grid parent */
   parentLayer?: Layer | null;
   onLayerUpdate: (layerId: string, updates: Partial<Layer>) => void;
+  /** For binding the grid span to a CMS field, so collection items can have different spans */
+  fieldGroups?: FieldGroup[];
+  allFields?: Record<string, CollectionField[]>;
+  collections?: Collection[];
 }
 
 // Round only the outer corner of each grid corner cell so the 3x3 grid reads as one rounded block
@@ -53,7 +58,7 @@ const OBJECT_POSITIONS: { value: string; label: string; icon: React.ComponentPro
   { value: 'right-bottom', label: 'Bottom right', icon: 'arrow-right-down' },
 ];
 
-const SizingControls = memo(function SizingControls({ layer, parentLayer = null, onLayerUpdate }: SizingControlsProps) {
+const SizingControls = memo(function SizingControls({ layer, parentLayer = null, onLayerUpdate, fieldGroups, allFields, collections }: SizingControlsProps) {
   const activeBreakpoint = useEditorStore((s) => s.activeBreakpoint);
   const activeUIState = useEditorStore((s) => s.activeUIState);
   const { updateDesignProperty, debouncedUpdateDesignProperty, getDesignProperty } = useDesignSync({
@@ -355,6 +360,10 @@ const SizingControls = memo(function SizingControls({ layer, parentLayer = null,
             property="gridColumnSpan"
             value={gridColumnSpan}
             onChange={(property, value) => updateDesignProperty('sizing', property, value)}
+            onLayerUpdate={onLayerUpdate}
+            fieldGroups={fieldGroups}
+            allFields={allFields}
+            collections={collections}
           />
           <GridSpanRow
             label="Rows"
@@ -362,6 +371,10 @@ const SizingControls = memo(function SizingControls({ layer, parentLayer = null,
             property="gridRowSpan"
             value={gridRowSpan}
             onChange={(property, value) => updateDesignProperty('sizing', property, value)}
+            onLayerUpdate={onLayerUpdate}
+            fieldGroups={fieldGroups}
+            allFields={allFields}
+            collections={collections}
           />
         </>
       )}

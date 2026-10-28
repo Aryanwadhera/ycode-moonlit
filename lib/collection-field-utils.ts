@@ -19,7 +19,7 @@ import type {
   VisibilityOperator,
 } from '@/types';
 import { ASSET_CATEGORIES, isAssetOfType } from '@/lib/asset-utils';
-import { findAllParentCollectionLayers, getCollectionVariable } from '@/lib/layer-utils';
+import { findAllParentCollectionLayers, findLayerById, getCollectionVariable } from '@/lib/layer-utils';
 
 // =============================================================================
 // Field Types Configuration
@@ -861,6 +861,9 @@ export const ASSET_FIELD_TYPES: CollectionFieldType[] = ['image', 'audio', 'vide
 /** Field types that can be bound to color design properties */
 export const COLOR_FIELD_TYPES: CollectionFieldType[] = ['color'];
 
+/** Field types that can be bound to a grid child's column/row span (number, or an option whose value resolves to a span) */
+export const SPAN_FIELD_TYPES: CollectionFieldType[] = ['number', 'option'];
+
 /** Field types that can be bound to image layers (image fields, or link/url fields holding an image URL) */
 export const IMAGE_FIELD_TYPES: CollectionFieldType[] = ['image', 'link'];
 
@@ -1231,6 +1234,17 @@ export function buildFieldGroupsForLayer(
   const parentCollectionLayers = parents
     .map(layer => ({ layerId: layer.id, collectionId: getCollectionVariable(layer)?.id }))
     .filter((item): item is ParentCollectionLayer => !!item.collectionId);
+
+  // A layer bound to its own collection (e.g. a collection list rendered directly as a
+  // grid child, so each repeated item IS the grid item) has no ancestor collection layer —
+  // only strict ancestors are considered above. Include its own binding as the innermost
+  // scope so fields of that collection are offered for design bindings on the same layer
+  // (e.g. binding grid span to a number field of the collection the layer itself repeats).
+  const selfLayer = findLayerById(layers, layerId);
+  const selfCollectionId = selfLayer ? getCollectionVariable(selfLayer)?.id : undefined;
+  if (selfCollectionId) {
+    parentCollectionLayers.unshift({ layerId, collectionId: selfCollectionId });
+  }
 
   return buildFieldGroups({
     parentCollectionLayers,

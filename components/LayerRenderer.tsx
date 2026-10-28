@@ -56,7 +56,7 @@ import { collectEditorHiddenLayerIds, collectKeptHiddenLayerIds, type HiddenLaye
 import AnimationInitializer from '@/components/AnimationInitializer';
 import { transformLayerIdsForInstance, resolveVariableLinks } from '@/lib/resolve-components';
 
-import type { DesignColorVariable } from '@/types';
+import type { DesignColorVariable, FieldVariable } from '@/types';
 
 /**
  * Build a map of layerId -> anchor value (the element's HTML id) for O(1) anchor resolution
@@ -2188,7 +2188,7 @@ const LayerItemImpl: React.FC<{
       : attrStyle;
 
     // Resolve design color bindings from CMS fields (editor + published, supports gradients)
-    const designBindings = layer.variables?.design as Record<string, DesignColorVariable> | undefined;
+    const designBindings = layer.variables?.design as Record<string, DesignColorVariable | FieldVariable> | undefined;
     const resolvedDesignStyles = designBindings
       ? resolveDesignStyles(designBindings, (fieldVar) =>
         resolveFieldValue(fieldVar, collectionLayerData, pageCollectionItemData, effectiveLayerDataMap)
@@ -3517,6 +3517,25 @@ const LayerItemImpl: React.FC<{
                   style: {
                     ...(elementProps.style as Record<string, unknown> || {}),
                     '--bg-img': combineBgValues(cssUrl, staticGradVars?.['--bg-img']),
+                  },
+                };
+              }
+            }
+
+            // Re-resolve design bindings per item (e.g. grid span bound to this very
+            // collection layer). `resolvedDesignStyles` above was computed once before
+            // this per-item data map existed, so a self-referential field binding would
+            // otherwise always read the pre-loop (template) context for every item.
+            if (designBindings) {
+              const perItemDesignStyles = resolveDesignStyles(designBindings, (fieldVar) =>
+                resolveFieldValue(fieldVar, mergedItemData, pageCollectionItemData, updatedLayerDataMap)
+              );
+              if (perItemDesignStyles) {
+                itemElementProps = {
+                  ...itemElementProps,
+                  style: {
+                    ...(itemElementProps.style as Record<string, unknown> || {}),
+                    ...perItemDesignStyles,
                   },
                 };
               }

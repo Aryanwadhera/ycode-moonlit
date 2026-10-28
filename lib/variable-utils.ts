@@ -609,6 +609,28 @@ export const DESIGN_COLOR_CSS_MAP: Record<string, string> = {
   textDecorationColor: 'textDecorationColor',
 };
 
+/** Maps design grid-span binding keys to CSS property names for inline styles */
+export const DESIGN_SPAN_CSS_MAP: Record<string, string> = {
+  gridColumnSpan: 'gridColumn',
+  gridRowSpan: 'gridRow',
+};
+
+/**
+ * Convert a resolved CMS field value ('1'…'12', 'full') to a CSS grid-column/row
+ * shorthand. Mirrors the Tailwind col-span-N / col-span-full values so a bound
+ * field behaves like the equivalent static class. Returns null for empty/invalid values.
+ */
+function resolveGridSpanValue(raw: string | number | null | undefined): string | null {
+  if (raw === null || raw === undefined || raw === '') return null;
+  // CMS number fields can come through as a JS number rather than a string,
+  // depending on the data path (e.g. editor canvas's per-item resolution).
+  const trimmed = String(raw).trim();
+  if (trimmed === 'full') return '1 / -1';
+  const n = parseInt(trimmed, 10);
+  if (!Number.isFinite(n) || n < 1) return null;
+  return `span ${n} / span ${n}`;
+}
+
 /**
  * Resolve a DesignColorVariable to a CSS value string using a field resolver.
  * Returns the resolved CSS value (solid color or gradient string) or null.
@@ -643,11 +665,11 @@ export function resolveDesignColorBinding(
 }
 
 /**
- * Resolve all design color bindings for a layer to inline CSS styles.
+ * Resolve all design bindings for a layer (CMS colors + grid span fields) to inline CSS styles.
  * Returns a Record of CSS property → value, or undefined if no bindings resolved.
  */
 export function resolveDesignStyles(
-  designBindings: Record<string, DesignColorVariable> | undefined,
+  designBindings: Record<string, DesignColorVariable | FieldVariable> | undefined,
   resolveField: (fieldVar: FieldVariable) => string | null | undefined,
 ): Record<string, string> | undefined {
   if (!designBindings) return undefined;
@@ -655,7 +677,17 @@ export function resolveDesignStyles(
   const styles: Record<string, string> = {};
   for (const [designProp, binding] of Object.entries(designBindings)) {
     if (!binding) continue;
-    const resolved = resolveDesignColorBinding(binding, resolveField);
+
+    const spanCssProp = DESIGN_SPAN_CSS_MAP[designProp];
+    if (spanCssProp) {
+      if (binding.type === 'field') {
+        const resolved = resolveGridSpanValue(resolveField(binding));
+        if (resolved) styles[spanCssProp] = resolved;
+      }
+      continue;
+    }
+
+    const resolved = resolveDesignColorBinding(binding as DesignColorVariable, resolveField);
     const cssProp = DESIGN_COLOR_CSS_MAP[designProp];
     if (resolved && cssProp) {
       // Gradients route through 'background' so renderers can merge with --bg-img variable

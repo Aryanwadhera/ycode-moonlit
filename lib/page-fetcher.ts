@@ -1531,7 +1531,7 @@ async function injectCollectionData(
   }
 
   // Design color field bindings → inline styles (supports solid + gradient)
-  const designBindings = layer.variables?.design as Record<string, DesignColorVariable> | undefined;
+  const designBindings = layer.variables?.design as Record<string, DesignColorVariable | FieldVariable> | undefined;
   if (designBindings) {
     const dynamicStyles = resolveDesignStyles(designBindings, (fieldVar) =>
       resolveFieldValueWithRelationships(fieldVar, enhancedValues, layerDataMap)
@@ -2042,6 +2042,12 @@ function collectBoundFieldIds(layers: Layer[]): { fieldIds: Set<string>; fieldPa
 
   function scanDesignColorVariable(dcv: any) {
     if (!dcv || typeof dcv !== 'object') return;
+    // Grid span bindings (gridColumnSpan/gridRowSpan) are a bare FieldVariable,
+    // not wrapped in a `.field` like color bindings are.
+    if (dcv.type === 'field' && dcv.data?.field_id) {
+      addFieldVariable(dcv);
+      return;
+    }
     if (dcv.field?.type === 'field') addFieldVariable(dcv.field);
     for (const stops of [dcv.linear?.stops, dcv.radial?.stops]) {
       if (Array.isArray(stops)) {
@@ -4152,7 +4158,7 @@ async function injectCollectionDataForHtml(
   }
 
   // Design color field bindings → inline styles (supports solid + gradient)
-  const designBindingsHtml = layer.variables?.design as Record<string, DesignColorVariable> | undefined;
+  const designBindingsHtml = layer.variables?.design as Record<string, DesignColorVariable | FieldVariable> | undefined;
   if (designBindingsHtml) {
     const dynamicStyles = resolveDesignStyles(designBindingsHtml, (fieldVar) =>
       resolveFieldPath(fieldVar)

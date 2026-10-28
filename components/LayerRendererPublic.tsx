@@ -15,7 +15,7 @@
 
 import React, { useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
 import dynamic from 'next/dynamic';
-import type { Layer, Locale, FormSettings, Component, DesignColorVariable, PasswordProtectionContext, DynamicTextVariable, DynamicRichTextVariable } from '@/types';
+import type { Layer, Locale, FormSettings, Component, DesignColorVariable, FieldVariable, PasswordProtectionContext, DynamicTextVariable, DynamicRichTextVariable } from '@/types';
 import { getLayerHtmlTag, getClassesString, getText, resolveFieldValue, isTextContentLayer, getCollectionVariable, filterDisabledSliderLayers, applyCustomAttributes, getEmptyLayerProps } from '@/lib/layer-utils';
 import { getMapIframeProps, DEFAULT_MAP_SETTINGS, resolveMarkerColor } from '@/lib/map-utils';
 import { HTML_TO_REACT_ATTRS } from '@/lib/parse-head-html';
@@ -890,7 +890,7 @@ const LayerItem: React.FC<{
       : attrStyle;
 
     // Resolve design color bindings from CMS fields (editor + published, supports gradients)
-    const designBindings = layer.variables?.design as Record<string, DesignColorVariable> | undefined;
+    const designBindings = layer.variables?.design as Record<string, DesignColorVariable | FieldVariable> | undefined;
     const resolvedDesignStyles = designBindings
       ? resolveDesignStyles(designBindings, (fieldVar) =>
         resolveFieldValue(fieldVar, collectionLayerData, pageCollectionItemData, effectiveLayerDataMap)

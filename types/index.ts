@@ -597,7 +597,7 @@ export interface LayerVariables {
   };
   link?: LinkSettings;
 
-  // Design property bindings (CMS color fields)
+  // Design property bindings (CMS color fields + grid span fields)
   design?: {
     backgroundColor?: DesignColorVariable;
     color?: DesignColorVariable; // text color
@@ -606,6 +606,11 @@ export interface LayerVariables {
     outlineColor?: DesignColorVariable;
     textDecorationColor?: DesignColorVariable;
     placeholderColor?: DesignColorVariable;
+    // CMS field binding for a grid child's column/row span (number or option field
+    // resolving to '1'…'12'/'full'). Bypasses the static col-span-N/row-span-N class
+    // so each collection item can take a different span.
+    gridColumnSpan?: FieldVariable;
+    gridRowSpan?: FieldVariable;
   };
 }
 

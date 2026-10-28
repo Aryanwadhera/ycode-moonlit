@@ -2087,6 +2087,9 @@ const RightSidebar = React.memo(function RightSidebar({
               layer={controlLayer}
               parentLayer={selectedLayerParent}
               onLayerUpdate={controlUpdate}
+              fieldGroups={fieldGroups}
+              allFields={fields}
+              collections={collections}
             />
           )}
 
