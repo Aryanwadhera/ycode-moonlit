@@ -626,8 +626,12 @@ function resolveGridSpanValue(raw: string | number | null | undefined): string |
   // depending on the data path (e.g. editor canvas's per-item resolution).
   const trimmed = String(raw).trim();
   if (trimmed === 'full') return '1 / -1';
-  const n = parseInt(trimmed, 10);
-  if (!Number.isFinite(n) || n < 1) return null;
+  // Require a clean integer (reject "2.5" instead of silently truncating it) and
+  // clamp to the 1-12 range this function's contract promises, matching the
+  // col-span-1..12 options Tailwind actually generates.
+  if (!/^\d+$/.test(trimmed)) return null;
+  const n = Number(trimmed);
+  if (n < 1 || n > 12) return null;
   return `span ${n} / span ${n}`;
 }
 

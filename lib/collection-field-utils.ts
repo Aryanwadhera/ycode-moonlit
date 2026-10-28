@@ -1220,6 +1220,13 @@ export function buildFieldGroupsForLayer(
   fieldsByCollectionId: Record<string, CollectionField[]>,
   collections: { id: string; name: string }[],
   globals?: GlobalVariable[],
+  // Only design-binding pickers (e.g. grid span) resolve per item today — see the
+  // per-item re-resolve loop in LayerRenderer.tsx. Content/text pickers resolve the
+  // layer's own bindings once, before that loop, so offering a layer's own collection
+  // there would list a field that silently renders the same stale value for every
+  // repeated item. Keep this opt-in per call site until content bindings get the same
+  // per-item treatment.
+  includeOwnCollection = false,
 ): FieldGroup[] | undefined {
   const parents = findAllParentCollectionLayers(layers, layerId);
   const parentCollection = parents[0] || null;
@@ -1240,10 +1247,12 @@ export function buildFieldGroupsForLayer(
   // only strict ancestors are considered above. Include its own binding as the innermost
   // scope so fields of that collection are offered for design bindings on the same layer
   // (e.g. binding grid span to a number field of the collection the layer itself repeats).
-  const selfLayer = findLayerById(layers, layerId);
-  const selfCollectionId = selfLayer ? getCollectionVariable(selfLayer)?.id : undefined;
-  if (selfCollectionId) {
-    parentCollectionLayers.unshift({ layerId, collectionId: selfCollectionId });
+  if (includeOwnCollection) {
+    const selfLayer = findLayerById(layers, layerId);
+    const selfCollectionId = selfLayer ? getCollectionVariable(selfLayer)?.id : undefined;
+    if (selfCollectionId) {
+      parentCollectionLayers.unshift({ layerId, collectionId: selfCollectionId });
+    }
   }
 
   return buildFieldGroups({
