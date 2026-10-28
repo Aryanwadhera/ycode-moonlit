@@ -60,6 +60,17 @@ function groupWarnings(warnings: HtmlImportWarning[]): { groups: WarningGroup[];
   };
 }
 
+/** Binds data-ycode-collection / -field / -link marks on the page tree. Read-only, so dry runs use it too. */
+async function bindCmsMarks(pageId: string, tree: Layer[], marks: Parameters<typeof applyCmsMarks>[1]) {
+  const page = await getPageById(pageId);
+  return applyCmsMarks(tree, marks, {
+    getCollections: () => getAllCollections({ deleted: false }),
+    getFields: (collectionId) => getFieldsByCollectionId(collectionId),
+    getPages: () => getAllPages({ is_published: false }),
+    pageCollectionId: page?.is_dynamic ? page.settings?.cms?.collection_id : undefined,
+  });
+}
+
 /**
  * Every draft page with its path and html ids, for pointing `/path` links at
  * the page with that path and `#id` links at the page that holds the id. The
@@ -341,6 +352,10 @@ HTML; add them afterwards with their tools.`,
       if (dry_run) {
         const updated = insertLayers(baseTree, parentId, converted.layers, insertAt);
         if (typeof updated === 'string') return errorResult(updated);
+        if (page_id && cmsMarks.length > 0) {
+          const applied = await bindCmsMarks(page_id, updated, cmsMarks);
+          warnings.push(...applied.warnings);
+        }
         const { groups, omitted } = groupWarnings(warnings);
         const refKeys = Object.keys(converted.refs);
         const componentNames = page_id ? [...new Set(componentMarks.map((m) => m.name))] : [];
@@ -387,13 +402,7 @@ HTML; add them afterwards with their tools.`,
 
       let cms: { collection_lists: ImportedCollectionList[]; fields_bound: number; item_links: number } | undefined;
       if (page_id && cmsMarks.length > 0) {
-        const page = await getPageById(page_id);
-        const applied = await applyCmsMarks(updated, cmsMarks, {
-          getCollections: () => getAllCollections({ deleted: false }),
-          getFields: (collectionId) => getFieldsByCollectionId(collectionId),
-          getPages: () => getAllPages({ is_published: false }),
-          pageCollectionId: page?.is_dynamic ? page.settings?.cms?.collection_id : undefined,
-        });
+        const applied = await bindCmsMarks(page_id, updated, cmsMarks);
         updated = applied.layers;
         warnings.push(...applied.warnings);
         cms = { collection_lists: applied.collection_lists, fields_bound: applied.fields_bound, item_links: applied.item_links };
