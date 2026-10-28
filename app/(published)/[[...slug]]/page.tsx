@@ -398,6 +398,7 @@ export default async function Page({ params }: PageProps) {
               redirectUrl: currentPath,
               isPublished: true,
             }}
+            localeSwitchTarget={{ page, collectionItem, collectionFields }}
           />
         );
       }

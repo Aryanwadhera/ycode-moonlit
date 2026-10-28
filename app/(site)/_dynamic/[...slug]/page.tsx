@@ -93,6 +93,7 @@ export default async function DynamicSlugPage({ params, searchParams }: DynamicS
               redirectUrl: currentPath,
               isPublished: true,
             }}
+            localeSwitchTarget={{ page, collectionItem, collectionFields }}
           />
         );
       }

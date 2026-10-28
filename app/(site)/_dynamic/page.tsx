@@ -75,12 +75,14 @@ export default async function DynamicHome({ searchParams }: DynamicHomeProps) {
             components={errorComponents}
             generatedCss={publishedCSS}
             colorVariablesCss={colorVariablesCss || undefined}
+            availableLocales={errorPageData.availableLocales}
             passwordProtection={{
               pageId: protection.protectedBy === 'page' ? protection.protectedById : undefined,
               folderId: protection.protectedBy === 'folder' ? protection.protectedById : undefined,
               redirectUrl: '/',
               isPublished: true,
             }}
+            localeSwitchTarget={{ page: data.page }}
           />
         );
       }

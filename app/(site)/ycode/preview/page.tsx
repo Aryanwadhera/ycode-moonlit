@@ -68,6 +68,7 @@ export default async function Home() {
           components={errorComponents}
           generatedCss={draftCSS}
           colorVariablesCss={colorVariablesCss || undefined}
+          availableLocales={errorPageData.availableLocales}
           isPreview={true}
           passwordProtection={{
             pageId: protection.protectedBy === 'page' ? protection.protectedById : undefined,
@@ -75,6 +76,7 @@ export default async function Home() {
             redirectUrl: '/ycode/preview',
             isPublished: false,
           }}
+          localeSwitchTarget={{ page: data.page }}
         />
       );
     }
