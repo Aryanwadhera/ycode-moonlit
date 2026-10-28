@@ -263,7 +263,7 @@ export const updateSettingsOp = z.object({
   custom_name: z.string().optional().describe('Display name for the layer in the builder'),
   hidden: z.boolean().optional().describe('Hide the layer everywhere (canvas and published site)'),
   keep_in_html: z.boolean().optional().describe('When hidden, keep the element in the HTML collapsed so custom code can reveal it'),
-  custom_attributes: z.record(z.string(), z.string()).optional().describe('Custom HTML attributes as { name: value } pairs (merged into existing)'),
+  custom_attributes: z.record(z.string(), z.string()).optional().describe('Custom HTML attributes as { name: value } pairs (merged into existing). On input / textarea / select, type, name, placeholder, value, required and autofocus set the field\'s own settings.'),
   html_embed_code: z.string().optional().describe('For htmlEmbed layers: the HTML/CSS/JS code to embed'),
 });
 
