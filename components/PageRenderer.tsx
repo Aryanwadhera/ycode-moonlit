@@ -26,7 +26,7 @@ import { getFieldsByCollectionId } from '@/lib/repositories/collectionFieldRepos
 import { REF_PAGE_PREFIX, REF_COLLECTION_PREFIX, isCollectionItemKeyword, parseCollectionLinkValue, type ResolvedAsset } from '@/lib/link-utils';
 import { getClassesString, hasPasswordFormLayer } from '@/lib/layer-utils';
 import { buildGlobalsMetaMap, buildGlobalsValueMap } from '@/lib/collection-field-utils';
-import { buildLocalizedPageUrls, slimFoldersForLinks, slimPagesForLinks, type LocalizedDynamicSlug } from '@/lib/page-utils';
+import { buildLocalizedPageUrls, getLocaleSwitchTarget, slimFoldersForLinks, slimPagesForLinks, type LocaleSwitchTarget, type LocalizedDynamicSlug } from '@/lib/page-utils';
 import { getTranslatableKey, slimTranslations } from '@/lib/locale-runtime';
 import { getSlugTranslationsByLocale } from '@/lib/repositories/translationRepository';
 import type { Layer, BackgroundsDesign, Component, Page, CollectionItemWithValues, CollectionField, Locale, PageFolder, PasswordProtectionContext, Translation } from '@/types';
@@ -359,6 +359,8 @@ interface PageRendererProps {
   globalCustomCodeBody?: string | null;
   ycodeBadge?: boolean;
   passwordProtection?: PasswordProtectionContext;
+  /** Requested page an error page renders in place of (e.g. the protected page behind a 401) */
+  localeSwitchTarget?: LocaleSwitchTarget | null;
 }
 
 /**
@@ -400,6 +402,7 @@ export default async function PageRenderer({
   globalCustomCodeBody,
   ycodeBadge = true,
   passwordProtection,
+  localeSwitchTarget,
 }: PageRendererProps) {
   const usePublishedData = page.is_published && !isPreview;
   // Check if this is a 401 error page that needs password form
@@ -520,10 +523,13 @@ export default async function PageRenderer({
   // preserves translated folder/page/CMS slugs instead of reusing the source slug.
   // Only runs on multi-locale pages that actually render a locale selector.
   let localizedPageUrls: Record<string, string> | undefined;
+  const switchTarget = getLocaleSwitchTarget({ page, collectionItem, collectionFields }, localeSwitchTarget);
   if (
+    switchTarget &&
     availableLocales.length > 1 &&
     layerTreeHasLayer(resolvedLayers, l => l.name === 'localeSelector')
   ) {
+    const { page: switchPage, collectionItem: switchItem, collectionFields: switchFields = [] } = switchTarget;
     try {
       const translationsByLocale: Record<string, Record<string, Translation>> = {};
       await Promise.all(
@@ -548,16 +554,16 @@ export default async function PageRenderer({
 
       // Dynamic pages need the translated CMS item slug per locale
       let dynamicSlug: LocalizedDynamicSlug | null = null;
-      if (page.is_dynamic && collectionItem) {
-        const slugField = collectionFields.find(f => f.key === 'slug');
+      if (switchPage.is_dynamic && switchItem) {
+        const slugField = switchFields.find(f => f.key === 'slug');
         if (slugField) {
           // collectionItem.values are already translated for the current locale,
           // so fetch the raw (default-locale) slug to use as the default + fallback.
-          const rawValues = await getValuesByItemIds([collectionItem.id], usePublishedData, undefined, [slugField.id]);
-          const sourceSlug = rawValues[collectionItem.id]?.[slugField.id];
+          const rawValues = await getValuesByItemIds([switchItem.id], usePublishedData, undefined, [slugField.id]);
+          const sourceSlug = rawValues[switchItem.id]?.[slugField.id];
           if (sourceSlug) {
             dynamicSlug = {
-              itemId: collectionItem.id,
+              itemId: switchItem.id,
               contentKey: slugField.key ? `field:key:${slugField.key}` : `field:id:${slugField.id}`,
               defaultValue: String(sourceSlug),
             };
@@ -565,7 +571,7 @@ export default async function PageRenderer({
         }
       }
 
-      localizedPageUrls = buildLocalizedPageUrls(page, folders, availableLocales, translationsByLocale, dynamicSlug);
+      localizedPageUrls = buildLocalizedPageUrls(switchPage, folders, availableLocales, translationsByLocale, dynamicSlug);
     } catch (error) {
       console.error('[PageRenderer] Error building localized page URLs:', error);
     }

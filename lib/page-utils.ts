@@ -3,7 +3,7 @@
  */
 
 import type { IconProps } from '@/components/ui/icon';
-import type { Page, PageFolder, PageSettings, FieldVariable, Translation, Locale } from '../types';
+import type { Page, PageFolder, PageSettings, FieldVariable, Translation, Locale, CollectionItemWithValues, CollectionField } from '../types';
 import { getTranslatableKey } from './locale-runtime';
 import { getTiptapTextContent } from '@/lib/text-format-utils';
 import { buildPasswordFormSubtree } from '@/lib/password-form-template';
@@ -400,6 +400,27 @@ export function buildLocalizedPageUrls(
   }
 
   return urls;
+}
+
+/** Page (and CMS item for dynamic pages) whose localized URLs the locale selector links to */
+export interface LocaleSwitchTarget {
+  page: Page;
+  collectionItem?: CollectionItemWithValues | null;
+  collectionFields?: CollectionField[];
+}
+
+/**
+ * Resolve what the locale selector links to. Error pages render in place of
+ * the requested URL, so they link to `requested` (e.g. the protected page
+ * behind a 401) instead of their own slug; without one (404/500), null lets
+ * the selector swap the locale prefix of the current path.
+ */
+export function getLocaleSwitchTarget(
+  current: LocaleSwitchTarget,
+  requested?: LocaleSwitchTarget | null
+): LocaleSwitchTarget | null {
+  if (current.page.error_page == null) return current;
+  return requested ?? null;
 }
 
 /**
