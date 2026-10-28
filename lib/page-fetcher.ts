@@ -10,7 +10,7 @@ import { enrichItemsWithCountValues } from '@/lib/repositories/collectionCountRe
 import { getLocaleScaffoldTranslations, getCmsTranslationsForItems } from '@/lib/repositories/translationRepository';
 import { getTranslatableKey, slimTranslations, translatePageCustomCode } from '@/lib/locale-runtime';
 import type { Page, PageFolder, PageLayers, Component, ComponentVariable, CollectionItemWithValues, CollectionField, Layer, CollectionPaginationMeta, Translation, Locale } from '@/types';
-import { getCollectionVariable, resolveFieldValue, evaluateVisibility, evaluateCondition, getLayerHtmlTag, filterDisabledSliderLayers } from '@/lib/layer-utils';
+import { getCollectionVariable, resolveFieldValue, evaluateVisibility, evaluateCondition, getLayerHtmlTag, filterDisabledSliderLayers, applyCustomAttributesToHtml } from '@/lib/layer-utils';
 import { isFieldVariable, isAssetVariable, createDynamicTextVariable, createDynamicRichTextVariable, createAssetVariable, getDynamicTextContent, getVariableStringValue, getAssetId, resolveDesignStyles } from '@/lib/variable-utils';
 import { buildImageSizes, generateImageSrcset, getOptimizedImageUrl, getAssetProxyUrl, DEFAULT_ASSETS, collectLayerAssetIds, resolveInlineSvgAssetSrc, parseImageDimension, getSvgAspectRatioStyle } from '@/lib/asset-utils';
 import { resolveComponents, applyComponentOverrides } from '@/lib/resolve-components';
@@ -4891,6 +4891,9 @@ export function layerToHtml(
     attrs.push(`id="${escapeHtml(layer.attributes.id)}"`);
   }
 
+  const custom = applyCustomAttributesToHtml(attrs, layer.settings?.customAttributes || {});
+  attrs.splice(0, attrs.length, ...custom.attrs);
+
   // Hide elements marked as hiddenGenerated. Scoped to alerts only: the flag is
   // meant for form success/error alerts, whose reveal path clears inline display.
   // Non-alert layers (e.g. animated dropdowns) manage visibility via
@@ -4947,6 +4950,8 @@ export function layerToHtml(
       inlineStyles['aspect-ratio'] = iconAspectRatio;
     }
   }
+
+  Object.assign(inlineStyles, custom.styles);
 
   if (Object.keys(inlineStyles).length > 0) {
     const styleStr = Object.entries(inlineStyles)
