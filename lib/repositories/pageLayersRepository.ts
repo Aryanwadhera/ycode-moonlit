@@ -482,6 +482,27 @@ export async function batchPublishPageLayers(
     }
   }
 
+  // Published layers need a published page row (fk_page_layers_page). Callers
+  // can pass draft-only or deleted pages (e.g. findAffectedPages scans drafts),
+  // and one such id would make the whole upsert fail.
+  const { data: publishedPages, error: publishedPagesError } = await client
+    .from('pages')
+    .select('id')
+    .in('id', pageIdsToPublish)
+    .eq('is_published', true)
+    .is('deleted_at', null);
+
+  if (publishedPagesError) {
+    throw new Error(`Failed to fetch published pages: ${publishedPagesError.message}`);
+  }
+
+  const publishedPageIdSet = new Set((publishedPages || []).map(p => p.id as string));
+  pageIdsToPublish = pageIdsToPublish.filter(id => publishedPageIdSet.has(id));
+
+  if (pageIdsToPublish.length === 0) {
+    return { count: 0, changedPageIds: [] };
+  }
+
   // Step 2: Fetch full draft layers only for the pages we will publish
   const draftLayers = await getDraftLayersForPages(pageIdsToPublish);
 
