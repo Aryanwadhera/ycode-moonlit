@@ -39,6 +39,7 @@ import { checkCircularReference, detachSpecificLayerFromComponent } from '@/lib/
 
 // Right sidebar is always visible in editor mode - load eagerly to avoid delay
 import RightPanel from '../components/RightPanel';
+import ResizableSidebar from '../components/ResizableSidebar';
 
 // Lazy-loaded components (heavy, not needed on initial render)
 const CMS = lazy(() => import('../components/CMS'));
@@ -2347,15 +2348,21 @@ export default function YCodeBuilder({ children }: YCodeBuilderProps = {} as YCo
                 <CMS />
               </Suspense>
               {!isEditor && agentEnabled && (
-                <div className="w-64 shrink-0 bg-background border-l flex flex-col h-full overflow-hidden">
-                  <div className="px-4 pt-4 shrink-0">
-                    <div className="flex h-8 items-center">
-                      <span className="text-xs font-medium">Agent</span>
+                <ResizableSidebar
+                  side="right"
+                  storageKey="ycode-sidebar-width-right-cms"
+                  className="h-full"
+                >
+                  <div className="w-full h-full bg-background border-l flex flex-col overflow-hidden">
+                    <div className="px-4 pt-4 shrink-0">
+                      <div className="flex h-8 items-center">
+                        <span className="text-xs font-medium">Agent</span>
+                      </div>
+                      <hr className="mt-4" />
                     </div>
-                    <hr className="mt-4" />
+                    <AiChatPanel embedded />
                   </div>
-                  <AiChatPanel embedded />
-                </div>
+                </ResizableSidebar>
               )}
             </div>
 
