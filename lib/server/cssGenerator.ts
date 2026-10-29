@@ -14,6 +14,7 @@ import type { Layer, Component } from '@/types';
 import { collectKeptHiddenLayerIds } from '@/lib/animation-utils';
 import { DEFAULT_TEXT_STYLES } from '@/lib/text-format-utils';
 import { extractSafeTailwindCandidates } from '@/lib/tailwind-candidate-utils';
+import { getGridSpanBindingClasses } from '@/lib/grid-span-binding-utils';
 import { compileTailwindCss } from '@/lib/server/tailwind-compiler';
 import { getAllDraftLayers, getDraftLayers, getEmbeddedComponentIdsForCollections } from '@/lib/repositories/pageLayersRepository';
 import { getAllComponents } from '@/lib/repositories/componentRepository';
@@ -59,6 +60,7 @@ function extractClassesFromLayers(layers: Layer[]): Set<string> {
     }
 
     extractClasses(layer.classes);
+    extractClasses(getGridSpanBindingClasses(layer));
 
     if (layer.textStyles) {
       Object.values(layer.textStyles).forEach((style: { classes?: string | string[] }) => {
