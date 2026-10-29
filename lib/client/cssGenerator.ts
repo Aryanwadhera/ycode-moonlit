@@ -10,6 +10,7 @@
 import type { Component, Layer } from '@/types';
 import { collectKeptHiddenLayerIds } from '@/lib/animation-utils';
 import { extractSafeTailwindCandidates } from '@/lib/tailwind-candidate-utils';
+import { getGridSpanBindingClasses } from '@/lib/grid-span-binding-utils';
 import { DEFAULT_TEXT_STYLES } from '@/lib/text-format-utils';
 import { TAILWIND_CUSTOM_VARIANTS } from '@/lib/tailwind-custom-variants';
 
@@ -53,6 +54,7 @@ function extractClassesFromLayers(layers: Layer[]): Set<string> {
 
     // Extract layer classes
     extractClasses(layer.classes);
+    extractClasses(getGridSpanBindingClasses(layer));
 
     // Extract text style classes (from layer.textStyles)
     if (layer.textStyles) {

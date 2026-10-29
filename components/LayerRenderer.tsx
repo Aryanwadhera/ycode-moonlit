@@ -18,6 +18,7 @@ import { getSliderPresizeVars } from '@/lib/slider-utils';
 import { useCanvasSlider } from '@/hooks/use-canvas-slider';
 import { resolveFieldFromSources } from '@/lib/cms-variables-utils';
 import { getDynamicTextContent, getImageUrlFromVariable, getVideoUrlFromVariable, getIframeUrlFromVariable, isFieldVariable, isAssetVariable, isStaticTextVariable, isDynamicTextVariable, getAssetId, getStaticTextContent, createAssetVariable, createDynamicTextVariable, resolveDesignStyles, getEffectiveHidden, getEffectiveId } from '@/lib/variable-utils';
+import { applyGridSpanBindings } from '@/lib/grid-span-binding-utils';
 import { getTranslatedAssetId, getTranslatedText, applyCmsTranslations, injectTranslatedText } from '@/lib/localisation-utils';
 import { isValidLinkSettings } from '@/lib/link-utils';
 import { DEFAULT_ASSETS, ASSET_CATEGORIES, isAssetOfType } from '@/lib/asset-utils';
@@ -2001,10 +2002,14 @@ const LayerItemImpl: React.FC<{
   const buttonNeedsTextCenter = isButtonWithLink
     && !layerClassList.some((c: string) => TEXT_ALIGN_CLASSES.has(c.split(':').pop() || ''));
 
+  const spanBoundClassesString = applyGridSpanBindings(classesString, layer.variables?.design, (fieldVar) =>
+    resolveFieldValue(fieldVar, collectionLayerData, pageCollectionItemData, effectiveLayerDataMap)
+  );
+
   // A static `hidden` class (Display: hidden in the design) would keep a revealed
   // layer collapsed; the published runtime strips it when the interaction shows it.
   const fullClassName = isEditMode ? clsx(
-    isRevealedOnCanvas ? stripDisplayNoneClasses(classesString) : classesString,
+    isRevealedOnCanvas ? stripDisplayNoneClasses(spanBoundClassesString) : spanBoundClassesString,
     paragraphClasses,
     SWIPER_CLASS_MAP[layer.name],
     isSlideChild && 'swiper-slide',
@@ -2016,7 +2021,7 @@ const LayerItemImpl: React.FC<{
     isLockedByOther && 'opacity-90 pointer-events-none select-none',
     isPaginationWrapperEmpty && 'hidden',
     'ycode-layer'
-  ) : clsx(classesString, paragraphClasses, SWIPER_CLASS_MAP[layer.name], isSlideChild && 'swiper-slide', buttonNeedsFit && 'w-fit', buttonNeedsTextCenter && 'text-center');
+  ) : clsx(spanBoundClassesString, paragraphClasses, SWIPER_CLASS_MAP[layer.name], isSlideChild && 'swiper-slide', buttonNeedsFit && 'w-fit', buttonNeedsTextCenter && 'text-center');
 
   // Hidden layers are omitted entirely (edit mode and public pages) unless kept
   // in HTML (reveal interaction or settings.keepInHtml) — those are in
@@ -3522,22 +3527,14 @@ const LayerItemImpl: React.FC<{
               }
             }
 
-            // Re-resolve design bindings per item (e.g. grid span bound to this very
-            // collection layer). `resolvedDesignStyles` above was computed once before
-            // this per-item data map existed, so a self-referential field binding would
-            // otherwise always read the pre-loop (template) context for every item.
-            if (designBindings) {
-              const perItemDesignStyles = resolveDesignStyles(designBindings, (fieldVar) =>
+            // Grid span bound to this collection's own fields: resolve per item, since
+            // `fullClassName` was built from the pre-loop (parent) context
+            if (layer.variables?.design && typeof itemElementProps.className === 'string') {
+              const itemClassName = applyGridSpanBindings(itemElementProps.className, layer.variables.design, (fieldVar) =>
                 resolveFieldValue(fieldVar, mergedItemData, pageCollectionItemData, updatedLayerDataMap)
               );
-              if (perItemDesignStyles) {
-                itemElementProps = {
-                  ...itemElementProps,
-                  style: {
-                    ...(itemElementProps.style as Record<string, unknown> || {}),
-                    ...perItemDesignStyles,
-                  },
-                };
+              if (itemClassName !== itemElementProps.className) {
+                itemElementProps = { ...itemElementProps, className: itemClassName };
               }
             }
 

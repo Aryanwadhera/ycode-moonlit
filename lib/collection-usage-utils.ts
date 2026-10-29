@@ -7,6 +7,7 @@
 
 import { getSupabaseAdmin } from '@/lib/supabase-server';
 import { getConnections as getAirtableConnections } from '@/lib/apps/airtable/sync-service';
+import { GRID_SPAN_BINDING_KEYS } from '@/lib/grid-span-binding-utils';
 import type { Layer, CollectionVariable, FieldVariable, DesignColorVariable } from '@/types';
 
 // ---------------------------------------------------------------------------
@@ -152,6 +153,7 @@ function layerFieldVarsContainId(layer: Layer, fieldId: string): boolean {
     if (designColorUsesField(vars.design.divideColor, fieldId)) return true;
     if (designColorUsesField(vars.design.outlineColor, fieldId)) return true;
     if (designColorUsesField(vars.design.textDecorationColor, fieldId)) return true;
+    if (GRID_SPAN_BINDING_KEYS.some(key => isFieldVarWithId(vars.design?.[key], fieldId))) return true;
   }
 
   return false;
