@@ -7,6 +7,7 @@ import { useAgentSettingsStore } from '@/stores/useAgentSettingsStore';
 import { useAiChatStore } from '@/stores/useAiChatStore';
 
 import AiChatPanel from './ai/AiChatPanel';
+import ResizableSidebar from './ResizableSidebar';
 import RightSidebar from './RightSidebar';
 
 import type { Layer } from '@/types';
@@ -42,29 +43,29 @@ export default function RightPanel({ onLayerUpdate }: RightPanelProps) {
     }
   };
 
-  if (!agentEnabled) {
-    return <RightSidebar onLayerUpdate={onLayerUpdate} />;
-  }
-
   return (
-    <div className="w-64 shrink-0 bg-background border-l flex flex-col h-full overflow-hidden">
-      <div className="px-4 pt-4 shrink-0">
-        <Tabs value={isAgent ? 'agent' : 'human'} onValueChange={handleModeChange}>
-          <TabsList className="w-full">
-            <TabsTrigger value="human" className="flex-1">Human</TabsTrigger>
-            <TabsTrigger value="agent" className="flex-1">Agent</TabsTrigger>
-          </TabsList>
-        </Tabs>
-        <hr className="mt-4" />
-      </div>
-
-      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-        {isAgent ? (
-          <AiChatPanel embedded />
-        ) : (
-          <RightSidebar embedded onLayerUpdate={onLayerUpdate} />
+    <ResizableSidebar side="right" className="h-full">
+      <div className="w-full h-full bg-background border-l flex flex-col overflow-hidden">
+        {agentEnabled && (
+          <div className="px-4 pt-4 shrink-0">
+            <Tabs value={isAgent ? 'agent' : 'human'} onValueChange={handleModeChange}>
+              <TabsList className="w-full">
+                <TabsTrigger value="human" className="flex-1">Human</TabsTrigger>
+                <TabsTrigger value="agent" className="flex-1">Agent</TabsTrigger>
+              </TabsList>
+            </Tabs>
+            <hr className="mt-4" />
+          </div>
         )}
+
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+          {agentEnabled && isAgent ? (
+            <AiChatPanel embedded />
+          ) : (
+            <RightSidebar embedded onLayerUpdate={onLayerUpdate} />
+          )}
+        </div>
       </div>
-    </div>
+    </ResizableSidebar>
   );
 }
