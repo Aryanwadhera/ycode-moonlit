@@ -29,6 +29,7 @@ import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } 
 import { CSS } from '@dnd-kit/utilities';
 import { restrictToVerticalAxis, restrictToParentElement } from '@dnd-kit/modifiers';
 import SettingsPanel from './SettingsPanel';
+import BoundFieldPill from './BoundFieldPill';
 
 import { useColorVariablesStore } from '@/stores/useColorVariablesStore';
 
@@ -2115,19 +2116,10 @@ export default function ColorPicker({
               {(() => {
                 const solidBinding = binding?.getBinding(null);
                 return solidBinding?.isBound ? (
-                  <div className="flex items-center h-8 rounded-lg bg-input px-2.5 gap-2">
-                    <Icon name="database" className="size-3 text-muted-foreground shrink-0" />
-                    <Label variant="muted" className="truncate text-xs flex-1">
-                      {solidBinding.fieldName || 'Color field'}
-                    </Label>
-                    <button
-                      type="button"
-                      className="ml-auto -mr-0.5 p-0.5 rounded-sm opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
-                      onClick={() => binding?.onUnbind(null)}
-                    >
-                      <Icon name="x" className="size-2.5" />
-                    </button>
-                  </div>
+                  <BoundFieldPill
+                    label={solidBinding.fieldName || 'Color field'}
+                    onUnbind={() => binding?.onUnbind(null)}
+                  />
                 ) : (
                   <div className="flex items-center gap-2">
                     <InputGroup className="flex-1">
@@ -2252,19 +2244,10 @@ export default function ColorPicker({
                     {(() => {
                       const stopBinding = binding?.getBinding(selectedStopId);
                       return stopBinding?.isBound ? (
-                        <div className="flex items-center h-8 rounded-lg bg-input px-2.5 gap-2">
-                          <Icon name="database" className="size-3 text-muted-foreground shrink-0" />
-                          <Label variant="muted" className="truncate text-xs flex-1">
-                            {stopBinding.fieldName || 'Color field'}
-                          </Label>
-                          <button
-                            type="button"
-                            className="ml-auto -mr-0.5 p-0.5 rounded-sm opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
-                            onClick={() => binding?.onUnbind(selectedStopId)}
-                          >
-                            <Icon name="x" className="size-2.5" />
-                          </button>
-                        </div>
+                        <BoundFieldPill
+                          label={stopBinding.fieldName || 'Color field'}
+                          onUnbind={() => binding?.onUnbind(selectedStopId)}
+                        />
                       ) : (
                         <div className="flex items-center gap-2">
                           <InputGroup className="flex-1">
@@ -2380,19 +2363,10 @@ export default function ColorPicker({
                     {(() => {
                       const stopBinding = binding?.getBinding(selectedStopId);
                       return stopBinding?.isBound ? (
-                        <div className="flex items-center h-8 rounded-lg bg-input px-2.5 gap-2">
-                          <Icon name="database" className="size-3 text-muted-foreground shrink-0" />
-                          <Label variant="muted" className="truncate text-xs flex-1">
-                            {stopBinding.fieldName || 'Color field'}
-                          </Label>
-                          <button
-                            type="button"
-                            className="ml-auto -mr-0.5 p-0.5 rounded-sm opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
-                            onClick={() => binding?.onUnbind(selectedStopId)}
-                          >
-                            <Icon name="x" className="size-2.5" />
-                          </button>
-                        </div>
+                        <BoundFieldPill
+                          label={stopBinding.fieldName || 'Color field'}
+                          onUnbind={() => binding?.onUnbind(selectedStopId)}
+                        />
                       ) : (
                         <div className="flex items-center gap-2">
                           <InputGroup className="flex-1">

@@ -1807,6 +1807,15 @@ const RightSidebar = React.memo(function RightSidebar({
     return buildFieldGroupsForLayer(selectedLayerId, allLayers, page, fields, collections, globals);
   }, [selectedLayerId, allLayers, currentPage, fields, collections, globals, editingComponentId]);
 
+  // Design bindings (e.g. grid span) resolve per collection item, unlike content/text
+  // bindings — so only this picker may also offer the layer's own collection. See the
+  // `includeOwnCollection` note on buildFieldGroupsForLayer.
+  const designFieldGroups = useMemo(() => {
+    if (!selectedLayerId || !allLayers.length) return undefined;
+    const page = editingComponentId ? null : currentPage;
+    return buildFieldGroupsForLayer(selectedLayerId, allLayers, page, fields, collections, globals, true);
+  }, [selectedLayerId, allLayers, currentPage, fields, collections, globals, editingComponentId]);
+
   // Get collection fields for the currently selected collection layer (for Sort By dropdown)
   const selectedCollectionFields = useMemo(() => {
     if (!selectedLayer) return [];
@@ -2087,6 +2096,9 @@ const RightSidebar = React.memo(function RightSidebar({
               layer={controlLayer}
               parentLayer={selectedLayerParent}
               onLayerUpdate={controlUpdate}
+              fieldGroups={designFieldGroups}
+              allFields={fields}
+              collections={collections}
             />
           )}
 

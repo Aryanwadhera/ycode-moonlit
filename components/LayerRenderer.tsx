@@ -18,6 +18,7 @@ import { getSliderPresizeVars } from '@/lib/slider-utils';
 import { useCanvasSlider } from '@/hooks/use-canvas-slider';
 import { resolveFieldFromSources } from '@/lib/cms-variables-utils';
 import { getDynamicTextContent, getImageUrlFromVariable, getVideoUrlFromVariable, getIframeUrlFromVariable, isFieldVariable, isAssetVariable, isStaticTextVariable, isDynamicTextVariable, getAssetId, getStaticTextContent, createAssetVariable, createDynamicTextVariable, resolveDesignStyles, getEffectiveHidden, getEffectiveId } from '@/lib/variable-utils';
+import { applyGridSpanBindings } from '@/lib/grid-span-binding-utils';
 import { getTranslatedAssetId, getTranslatedText, applyCmsTranslations, injectTranslatedText } from '@/lib/localisation-utils';
 import { isValidLinkSettings } from '@/lib/link-utils';
 import { DEFAULT_ASSETS, ASSET_CATEGORIES, isAssetOfType } from '@/lib/asset-utils';
@@ -56,7 +57,7 @@ import { collectEditorHiddenLayerIds, collectKeptHiddenLayerIds, type HiddenLaye
 import AnimationInitializer from '@/components/AnimationInitializer';
 import { transformLayerIdsForInstance, resolveVariableLinks } from '@/lib/resolve-components';
 
-import type { DesignColorVariable } from '@/types';
+import type { DesignColorVariable, FieldVariable } from '@/types';
 
 /**
  * Build a map of layerId -> anchor value (the element's HTML id) for O(1) anchor resolution
@@ -2001,10 +2002,14 @@ const LayerItemImpl: React.FC<{
   const buttonNeedsTextCenter = isButtonWithLink
     && !layerClassList.some((c: string) => TEXT_ALIGN_CLASSES.has(c.split(':').pop() || ''));
 
+  const spanBoundClassesString = applyGridSpanBindings(classesString, layer.variables?.design, (fieldVar) =>
+    resolveFieldValue(fieldVar, collectionLayerData, pageCollectionItemData, effectiveLayerDataMap)
+  );
+
   // A static `hidden` class (Display: hidden in the design) would keep a revealed
   // layer collapsed; the published runtime strips it when the interaction shows it.
   const fullClassName = isEditMode ? clsx(
-    isRevealedOnCanvas ? stripDisplayNoneClasses(classesString) : classesString,
+    isRevealedOnCanvas ? stripDisplayNoneClasses(spanBoundClassesString) : spanBoundClassesString,
     paragraphClasses,
     SWIPER_CLASS_MAP[layer.name],
     isSlideChild && 'swiper-slide',
@@ -2016,7 +2021,7 @@ const LayerItemImpl: React.FC<{
     isLockedByOther && 'opacity-90 pointer-events-none select-none',
     isPaginationWrapperEmpty && 'hidden',
     'ycode-layer'
-  ) : clsx(classesString, paragraphClasses, SWIPER_CLASS_MAP[layer.name], isSlideChild && 'swiper-slide', buttonNeedsFit && 'w-fit', buttonNeedsTextCenter && 'text-center');
+  ) : clsx(spanBoundClassesString, paragraphClasses, SWIPER_CLASS_MAP[layer.name], isSlideChild && 'swiper-slide', buttonNeedsFit && 'w-fit', buttonNeedsTextCenter && 'text-center');
 
   // Hidden layers are omitted entirely (edit mode and public pages) unless kept
   // in HTML (reveal interaction or settings.keepInHtml) — those are in
@@ -2188,7 +2193,7 @@ const LayerItemImpl: React.FC<{
       : attrStyle;
 
     // Resolve design color bindings from CMS fields (editor + published, supports gradients)
-    const designBindings = layer.variables?.design as Record<string, DesignColorVariable> | undefined;
+    const designBindings = layer.variables?.design as Record<string, DesignColorVariable | FieldVariable> | undefined;
     const resolvedDesignStyles = designBindings
       ? resolveDesignStyles(designBindings, (fieldVar) =>
         resolveFieldValue(fieldVar, collectionLayerData, pageCollectionItemData, effectiveLayerDataMap)
@@ -3519,6 +3524,17 @@ const LayerItemImpl: React.FC<{
                     '--bg-img': combineBgValues(cssUrl, staticGradVars?.['--bg-img']),
                   },
                 };
+              }
+            }
+
+            // Grid span bound to this collection's own fields: resolve per item, since
+            // `fullClassName` was built from the pre-loop (parent) context
+            if (layer.variables?.design && typeof itemElementProps.className === 'string') {
+              const itemClassName = applyGridSpanBindings(itemElementProps.className, layer.variables.design, (fieldVar) =>
+                resolveFieldValue(fieldVar, mergedItemData, pageCollectionItemData, updatedLayerDataMap)
+              );
+              if (itemClassName !== itemElementProps.className) {
+                itemElementProps = { ...itemElementProps, className: itemClassName };
               }
             }
 

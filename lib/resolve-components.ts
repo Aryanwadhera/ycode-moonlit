@@ -7,6 +7,7 @@
 import type { Layer, Component, ComponentVariable, ComponentVariableValue, LayerVariables, VariantSettingsValue } from '@/types';
 import { getComponentVariantLayers } from './component-variant-utils';
 import { normalizeComponentVariableValue, resolveLinkedHidden, resolveLinkedId } from './variable-utils';
+import { GRID_SPAN_BINDING_KEYS } from './grid-span-binding-utils';
 
 /**
  * Remap collection_layer_id in a FieldVariable using the ID map.
@@ -178,6 +179,12 @@ function remapVariableCollectionLayerIds(vars: LayerVariables, idMap: Map<string
       if (vars.design[key]) {
         const r = remapDesignColor(vars.design[key], idMap);
         if (r !== vars.design[key]) { (newDesign as any)[key] = r; designChanged = true; }
+      }
+    }
+    for (const key of GRID_SPAN_BINDING_KEYS) {
+      if (vars.design[key]) {
+        const r = remapFieldVariable(vars.design[key], idMap);
+        if (r !== vars.design[key]) { newDesign[key] = r; designChanged = true; }
       }
     }
     if (designChanged) { result.design = newDesign; changed = true; }

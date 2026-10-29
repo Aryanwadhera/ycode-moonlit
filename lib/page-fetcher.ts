@@ -10,8 +10,9 @@ import { enrichItemsWithCountValues } from '@/lib/repositories/collectionCountRe
 import { getLocaleScaffoldTranslations, getCmsTranslationsForItems } from '@/lib/repositories/translationRepository';
 import { getTranslatableKey, slimTranslations, translatePageCustomCode } from '@/lib/locale-runtime';
 import type { Page, PageFolder, PageLayers, Component, ComponentVariable, CollectionItemWithValues, CollectionField, Layer, CollectionPaginationMeta, Translation, Locale } from '@/types';
-import { getCollectionVariable, resolveFieldValue, evaluateVisibility, evaluateCondition, getLayerHtmlTag, filterDisabledSliderLayers, applyCustomAttributesToHtml } from '@/lib/layer-utils';
+import { getCollectionVariable, getClassesString, resolveFieldValue, evaluateVisibility, evaluateCondition, getLayerHtmlTag, filterDisabledSliderLayers, applyCustomAttributesToHtml } from '@/lib/layer-utils';
 import { isFieldVariable, isAssetVariable, createDynamicTextVariable, createDynamicRichTextVariable, createAssetVariable, getDynamicTextContent, getVariableStringValue, getAssetId, resolveDesignStyles } from '@/lib/variable-utils';
+import { applyGridSpanBindings } from '@/lib/grid-span-binding-utils';
 import { buildImageSizes, generateImageSrcset, getOptimizedImageUrl, getAssetProxyUrl, DEFAULT_ASSETS, collectLayerAssetIds, resolveInlineSvgAssetSrc, parseImageDimension, getSvgAspectRatioStyle } from '@/lib/asset-utils';
 import { resolveComponents, applyComponentOverrides } from '@/lib/resolve-components';
 import { getComponentVariantLayers } from '@/lib/component-variant-utils';
@@ -1531,13 +1532,18 @@ async function injectCollectionData(
   }
 
   // Design color field bindings → inline styles (supports solid + gradient)
-  const designBindings = layer.variables?.design as Record<string, DesignColorVariable> | undefined;
+  const designBindings = layer.variables?.design as Record<string, DesignColorVariable | FieldVariable> | undefined;
   if (designBindings) {
-    const dynamicStyles = resolveDesignStyles(designBindings, (fieldVar) =>
-      resolveFieldValueWithRelationships(fieldVar, enhancedValues, layerDataMap)
-    );
+    const resolveDesignField = (fieldVar: FieldVariable) =>
+      resolveFieldValueWithRelationships(fieldVar, enhancedValues, layerDataMap);
+    const dynamicStyles = resolveDesignStyles(designBindings, resolveDesignField);
     if (dynamicStyles) {
       updates._dynamicStyles = dynamicStyles;
+    }
+    const classes = getClassesString(layer);
+    const spanBoundClasses = applyGridSpanBindings(classes, layer.variables?.design, resolveDesignField);
+    if (spanBoundClasses !== classes) {
+      updates.classes = spanBoundClasses;
     }
   }
 
@@ -2042,6 +2048,12 @@ function collectBoundFieldIds(layers: Layer[]): { fieldIds: Set<string>; fieldPa
 
   function scanDesignColorVariable(dcv: any) {
     if (!dcv || typeof dcv !== 'object') return;
+    // Grid span bindings (gridColumnSpan/gridRowSpan) are a bare FieldVariable,
+    // not wrapped in a `.field` like color bindings are.
+    if (dcv.type === 'field' && dcv.data?.field_id) {
+      addFieldVariable(dcv);
+      return;
+    }
     if (dcv.field?.type === 'field') addFieldVariable(dcv.field);
     for (const stops of [dcv.linear?.stops, dcv.radial?.stops]) {
       if (Array.isArray(stops)) {
@@ -4152,13 +4164,16 @@ async function injectCollectionDataForHtml(
   }
 
   // Design color field bindings → inline styles (supports solid + gradient)
-  const designBindingsHtml = layer.variables?.design as Record<string, DesignColorVariable> | undefined;
+  const designBindingsHtml = layer.variables?.design as Record<string, DesignColorVariable | FieldVariable> | undefined;
   if (designBindingsHtml) {
-    const dynamicStyles = resolveDesignStyles(designBindingsHtml, (fieldVar) =>
-      resolveFieldPath(fieldVar)
-    );
+    const dynamicStyles = resolveDesignStyles(designBindingsHtml, resolveFieldPath);
     if (dynamicStyles) {
       updates._dynamicStyles = dynamicStyles;
+    }
+    const classes = getClassesString(layer);
+    const spanBoundClasses = applyGridSpanBindings(classes, layer.variables?.design, resolveFieldPath);
+    if (spanBoundClasses !== classes) {
+      updates.classes = spanBoundClasses;
     }
   }
 

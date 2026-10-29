@@ -328,7 +328,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   setSliderAnimating: (value) => set({ isSliderAnimating: value }),
   isSidebarResizing: false,
   setSidebarResizing: (value) => set({ isSidebarResizing: value }),
-  leftSidebarWidth: 256,
+  leftSidebarWidth: 260,
   setLeftSidebarWidth: (value) => set({ leftSidebarWidth: value }),
   isCanvasContextMenuOpen: false,
   setCanvasContextMenuOpen: (value) => set({ isCanvasContextMenuOpen: value }),

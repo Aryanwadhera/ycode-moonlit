@@ -21,9 +21,9 @@ interface UseResizableSidebarOptions {
  */
 export function useResizableSidebar({
   side,
-  defaultWidth = 256,
-  minWidth = 200,
-  maxWidth = 480,
+  defaultWidth = 260,
+  minWidth = defaultWidth,
+  maxWidth = 500,
   storageKey,
 }: UseResizableSidebarOptions) {
   const resolvedKey = storageKey ?? `${STORAGE_KEY_PREFIX}${side}`;

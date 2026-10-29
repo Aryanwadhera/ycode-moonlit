@@ -123,6 +123,15 @@ const viewportSizes: Record<ViewportMode, { width: string; label: string; icon: 
   mobile: { width: '375px', label: 'Mobile', icon: '📱' },
 };
 
+const VIEWPORT_OPTIONS: { value: ViewportMode; label: string }[] = [
+  { value: 'desktop', label: 'Desktop' },
+  { value: 'tablet', label: 'Tablet' },
+  { value: 'mobile', label: 'Phone' },
+];
+
+/** Side columns can shrink to zero so the centered controls never overflow */
+const CANVAS_TOOLBAR_CLASSES = '@container grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-2 items-center p-4 border-b bg-background';
+
 interface ViewportZoomControlsProps {
   viewportMode: ViewportMode;
   zoom: number;
@@ -145,15 +154,39 @@ function ViewportZoomControls({
   onZoomToFit,
   onAutofit,
 }: ViewportZoomControlsProps) {
+  const handleViewportChange = (value: string) => onViewportChange(value as ViewportMode);
+
   return (
     <div className="flex justify-center gap-2">
-      <Tabs value={viewportMode} onValueChange={(v) => onViewportChange(v as ViewportMode)}>
+      {/* Thresholds are container queries against CANVAS_TOOLBAR_CLASSES,
+          since the canvas width depends on the resizable sidebars */}
+      <Tabs
+        value={viewportMode}
+        onValueChange={handleViewportChange}
+        className="@max-[680px]:hidden"
+      >
         <TabsList className="w-50">
-          <TabsTrigger value="desktop" title="Desktop View">Desktop</TabsTrigger>
-          <TabsTrigger value="tablet" title="Tablet View">Tablet</TabsTrigger>
-          <TabsTrigger value="mobile" title="Mobile View">Phone</TabsTrigger>
+          {VIEWPORT_OPTIONS.map(({ value, label }) => (
+            <TabsTrigger
+              key={value}
+              value={value}
+              title={`${label} View`}
+            >
+              {label}
+            </TabsTrigger>
+          ))}
         </TabsList>
       </Tabs>
+      <Select value={viewportMode} onValueChange={handleViewportChange}>
+        <SelectTrigger className="w-24 @min-[680px]:hidden" aria-label="Viewport">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {VIEWPORT_OPTIONS.map(({ value, label }) => (
+            <SelectItem key={value} value={value}>{label}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
@@ -2206,17 +2239,17 @@ const CenterCanvas = React.memo(function CenterCanvas({
   return (
     <div className="flex-1 min-w-0 flex flex-col relative">
       {/* Top Bar */}
-      <div className="grid grid-cols-3 items-center p-4 border-b bg-background">
+      <div className={CANVAS_TOOLBAR_CLASSES}>
         {/* Page Selector or Back to Page Button */}
         {editingComponentId ? (
           <Button
             variant="purple"
             size="sm"
             onClick={onExitComponentEditMode}
-            className="gap-1 w-fit"
+            className="gap-1 w-fit max-w-full min-w-0 overflow-hidden"
           >
             <Icon name="arrowLeft" />
-            {(() => {
+            <span className="truncate">{(() => {
               const returnDestination = getReturnDestination();
               if (returnDestination && returnDestination.name) {
                 return returnDestination.type === 'page'
@@ -2235,16 +2268,16 @@ const CenterCanvas = React.memo(function CenterCanvas({
               }
               // Final fallback to old behavior if stack is empty
               return `Back to ${returnToPage ? returnToPage.name : 'Homepage'}`;
-            })()}
+            })()}</span>
           </Button>
         ) : (
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 min-w-0">
             <PageSelector
               value={currentPageId}
               onValueChange={handlePageSelect}
               includeErrorPages
               align="start"
-              className="w-40 text-muted-foreground"
+              className="w-40 min-w-0 shrink text-muted-foreground"
               popoverClassName="min-w-60"
             />
 
@@ -2984,7 +3017,7 @@ const CenterCanvas = React.memo(function CenterCanvas({
         }}
       >
         {/* Preview toolbar */}
-        <div className="shrink-0 grid grid-cols-3 items-center p-4 border-b bg-background">
+        <div className={cn('shrink-0', CANVAS_TOOLBAR_CLASSES)}>
           <div />
           <ViewportZoomControls
             viewportMode={viewportMode}
@@ -3002,8 +3035,9 @@ const CenterCanvas = React.memo(function CenterCanvas({
                 variant="secondary"
                 size="sm"
                 onClick={() => window.open(previewUrl, '_blank')}
+                aria-label="Open in new tab"
               >
-                Open in new tab
+                <span className="@max-[680px]:hidden">Open in new tab</span>
                 <Icon name="external-link" />
               </Button>
             )}

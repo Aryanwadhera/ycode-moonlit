@@ -15,6 +15,7 @@ import { DEFAULT_ASSETS } from '@/lib/asset-constants';
 import { resolveInlineSvgAssetSrc, type InlineSvgAssetLike } from '@/lib/asset-utils';
 import { parseCollectionLinkValue } from '@/lib/link-utils';
 import { stringToTiptapContent } from '@/lib/text-format-utils';
+import { isGridSpanBindingKey } from '@/lib/grid-span-binding-utils';
 
 /** Canonical empty componentOverrides structure — use when setting/resetting overrides */
 export const EMPTY_OVERRIDES: NonNullable<Layer['componentOverrides']> = {
@@ -644,18 +645,20 @@ export function resolveDesignColorBinding(
 
 /**
  * Resolve all design color bindings for a layer to inline CSS styles.
+ * Grid span bindings are skipped; they resolve to classes (see `applyGridSpanBindings`).
  * Returns a Record of CSS property → value, or undefined if no bindings resolved.
  */
 export function resolveDesignStyles(
-  designBindings: Record<string, DesignColorVariable> | undefined,
+  designBindings: Record<string, DesignColorVariable | FieldVariable> | undefined,
   resolveField: (fieldVar: FieldVariable) => string | null | undefined,
 ): Record<string, string> | undefined {
   if (!designBindings) return undefined;
 
   const styles: Record<string, string> = {};
   for (const [designProp, binding] of Object.entries(designBindings)) {
-    if (!binding) continue;
-    const resolved = resolveDesignColorBinding(binding, resolveField);
+    if (!binding || isGridSpanBindingKey(designProp)) continue;
+
+    const resolved = resolveDesignColorBinding(binding as DesignColorVariable, resolveField);
     const cssProp = DESIGN_COLOR_CSS_MAP[designProp];
     if (resolved && cssProp) {
       // Gradients route through 'background' so renderers can merge with --bg-img variable
